@@ -971,7 +971,7 @@ if __name__ == "__main__":
     port_env = os.environ.get("PORT")
     if port_env:
         print(f"Iniciando en Nube, puerto: {port_env}")
-        ft.app(target=main, view=ft.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
     else:
         print("Iniciando localmente...")
-        ft.app(target=main, view=ft.WEB_BROWSER, port=8550)
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
