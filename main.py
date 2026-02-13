@@ -142,19 +142,7 @@ def main(page: ft.Page):
         "curso_nombre": None,
         "alumno_id": None
     }
- # Configuración de logging para debug
-    import logging
-    logging.basicConfig(level=logging.DEBUG)
-    
-    # Verificar conexión a DB antes de iniciar
-    conn = get_db_connection()
-    if not conn:
-        page.add(ft.Text("❌ ERROR CRÍTICO: No se pudo conectar a la base de datos", color="red", size=20))
-        page.update()
-        return  # Detener la app si no hay DB
-    
-    conn.close()
-    
+
     # --- COMPONENTES UI REUTILIZABLES ---
 
     def create_header(title, subtitle="", leading_action=None, trailing_action=None):
@@ -531,13 +519,12 @@ def main(page: ft.Page):
     page.on_view_pop = view_pop
     page.go("/")
 
-   
 if __name__ == "__main__":
     port_env = os.environ.get("PORT")
     if port_env:
         # Modo Nube: Usamos 'ft.app' configurado para Render
-        # El parámetro 'view=ft.AppView.WEB_BROWSER' asegura compatibilidad
-        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
+        # El parámetro 'view=ft.AppView.FLET_APP_WEB' asegura compatibilidad
+        ft.app(target=main, view=ft.AppView.FLET_APP_WEB, port=int(port_env), host="0.0.0.0")
     else:
         # Modo Local
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
