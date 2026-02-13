@@ -606,7 +606,7 @@ def main(page: ft.Page):
         return ft.View("/", [
             ft.Container(
                 content=ft.Column([
-                    ft.Icon(ft.icons.EDUCATION, size=80, color=PRIMARY),  # Cambiado de SCHOOL a EDUCATION
+                    ft.Icon(ft.icons.BOOK, size=80, color=PRIMARY),  # Cambiado a BOOK
                     ft.Text("Sistema de Asistencia", size=28, weight="bold", color=SECONDARY),
                     ft.Text("UNSAM", size=18, color="grey"),
                     ft.Divider(height=30, color="transparent"),
@@ -666,7 +666,7 @@ def main(page: ft.Page):
                 cursos_col.controls.append(create_card(
                     content=ft.Row([
                         ft.Row([
-                            ft.Container(content=ft.Icon(ft.icons.CLASS_, color="white"), bgcolor=PRIMARY, border_radius=10, padding=10), 
+                            ft.Container(content=ft.Icon(ft.icons.MENU_BOOK, color="white"), bgcolor=PRIMARY, border_radius=10, padding=10),  # Cambiado a MENU_BOOK
                             ft.Text(c['nombre'], weight="bold", size=18, color=SECONDARY)
                         ]),
                         action_row
@@ -1063,7 +1063,7 @@ def main(page: ft.Page):
         card = create_card(
             content=ft.Column([
                 ft.Row([
-                    ft.Icon(ft.icons.PERSON_PIN, size=50, color=PRIMARY), 
+                    ft.Icon(ft.icons.PERSON, size=50, color=PRIMARY),  # Cambiado a PERSON
                     ft.Column([
                         ft.Text(s['nombre'], size=24, weight="bold"), 
                         ft.Text(f"DNI: {s.get('dni', '-')}", color="grey")
