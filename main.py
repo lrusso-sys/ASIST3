@@ -60,7 +60,7 @@ class Security:
 # ======================================================================
 
 class DatabaseManager:
-    def __init__(self):
+    def init__(self):
         self.lock = threading.Lock()
         # No inicializamos la DB en el constructor para evitar crashes al importar
         # Se llamará explícitamente al inicio
