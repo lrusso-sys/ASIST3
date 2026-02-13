@@ -21,21 +21,34 @@ except ImportError:
     print("⚠️ XlsxWriter no instalado. La exportación a Excel estará deshabilitada.")
 
 # ==============================================================================
-# 1. BASE DE DATOS (PostgreSQL)
+# 1. BASE DE DATOS (PostgreSQL) - CONFIGURACIÓN PARA RENDER
 # ==============================================================================
 
-# Configuración de conexión PostgreSQL - Modifica estos valores según tu servidor
-DB_CONFIG = {
-    'host': os.environ.get('DB_HOST', 'localhost'),
-    'database': os.environ.get('DB_NAME', 'asistencia_db'),
-    'user': os.environ.get('DB_USER', 'postgres'),
-    'password': os.environ.get('DB_PASSWORD', 'password'),
-    'port': os.environ.get('DB_PORT', '5432')
-}
-
 def get_db_connection():
-    """Establece conexión con PostgreSQL"""
-    conn = psycopg2.connect(**DB_CONFIG)
+    """
+    Establece conexión con PostgreSQL.
+    En Render, usa la variable de entorno DATABASE_URL si está disponible.
+    """
+    # Intentar usar DATABASE_URL (formato de Render y otros servicios cloud)
+    database_url = os.environ.get('DATABASE_URL')
+    
+    if database_url:
+        # Render proporciona DATABASE_URL en formato postgres://user:pass@host:port/dbname
+        # psycopg2 necesita postgresql:// en lugar de postgres://
+        if database_url.startswith('postgres://'):
+            database_url = database_url.replace('postgres://', 'postgresql://', 1)
+        conn = psycopg2.connect(database_url)
+    else:
+        # Configuración manual para desarrollo local
+        DB_CONFIG = {
+            'host': os.environ.get('DB_HOST', 'localhost'),
+            'database': os.environ.get('DB_NAME', 'asistencia_db'),
+            'user': os.environ.get('DB_USER', 'postgres'),
+            'password': os.environ.get('DB_PASSWORD', 'password'),
+            'port': os.environ.get('DB_PORT', '5432')
+        }
+        conn = psycopg2.connect(**DB_CONFIG)
+    
     return conn
 
 def hash_password(password):
@@ -45,9 +58,6 @@ def init_db():
     """Inicializa la base de datos PostgreSQL con las tablas necesarias"""
     conn = get_db_connection()
     cursor = conn.cursor()
-    
-    # Habilitar extensión para UUID (opcional pero recomendado)
-    cursor.execute("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";")
     
     # Tablas - Adaptadas para PostgreSQL (SERIAL, BOOLEAN, etc.)
     cursor.execute("""
@@ -1483,9 +1493,6 @@ def main(page: ft.Page):
 if __name__ == "__main__":
     port_env = os.environ.get("PORT")
     if port_env:
-        # CORREGIDO: Usar ft.app() con view=ft.AppView.WEB_BROWSER para servidores
-        # o view=ft.AppView.FLET_APP para modo web sin ventana
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
     else:
-        # Modo desarrollo local
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
