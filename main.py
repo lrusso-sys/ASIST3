@@ -531,24 +531,13 @@ def main(page: ft.Page):
     page.on_view_pop = view_pop
     page.go("/")
 
+   
 if __name__ == "__main__":
     port_env = os.environ.get("PORT")
-    
     if port_env:
-        # === MODO RENDER/PRODUCCIÓN ===
-        # IMPORTANTE: No usar WEB_BROWSER en producción
-        # Usar FLET_APP_WEB para servir como web app
-     ft.app(
-            target=main,
-            view=ft.AppView.FLET_APP_WEB,
-            port=int(port_env),
-            host="0.0.0.0",
-            web_renderer=ft.WebRenderer.CANVAS  # Forzar CANVAS en lugar de HTML
-)
+        # Modo Nube: Usamos 'ft.app' configurado para Render
+        # El parámetro 'view=ft.AppView.WEB_BROWSER' asegura compatibilidad
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
     else:
-        # === MODO LOCAL ===
-        ft.app(
-            target=main, 
-            view=ft.AppView.WEB_BROWSER,  # Esto sí funciona localmente
-            port=8550
-        )
+        # Modo Local
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
