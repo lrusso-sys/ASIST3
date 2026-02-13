@@ -538,12 +538,13 @@ if __name__ == "__main__":
         # === MODO RENDER/PRODUCCIÓN ===
         # IMPORTANTE: No usar WEB_BROWSER en producción
         # Usar FLET_APP_WEB para servir como web app
-        ft.app(
-            target=main, 
-            view=ft.AppView.FLET_APP_WEB,  # ← CAMBIO CRÍTICO
-            port=int(port_env), 
-            host="0.0.0.0"
-        )
+     ft.app(
+            target=main,
+            view=ft.AppView.FLET_APP_WEB,
+            port=int(port_env),
+            host="0.0.0.0",
+            web_renderer=ft.WebRenderer.CANVAS  # Forzar CANVAS en lugar de HTML
+)
     else:
         # === MODO LOCAL ===
         ft.app(
