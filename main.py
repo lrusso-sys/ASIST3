@@ -18,44 +18,15 @@ except ImportError:
 try:
     import xlsxwriter
 except ImportError:
-    xlsxwriter = None
     print("⚠️ XlsxWriter no instalado.")
 
-# ==============================================================================
-# CONFIGURACIÓN DE BASE DE DATOS POSTGRESQL
-# ==============================================================================
-
-def get_db_connection():
-    """Obtiene conexión a PostgreSQL desde variables de entorno."""
-    # Render proporciona DATABASE_URL automáticamente
-    database_url = os.environ.get('DATABASE_URL')
-    
-    if database_url:
-        # Render usa postgres:// pero psycopg2 necesita postgresql://
-        if database_url.startswith('postgres://'):
-            database_url = database_url.replace('postgres://', 'postgresql://', 1)
-        conn = psycopg2.connect(database_url, sslmode='require')
-    else:
-        # Configuración local (desarrollo)
-        conn = psycopg2.connect(
-            host=os.environ.get('DB_HOST', 'localhost'),
-            port=os.environ.get('DB_PORT', '5432'),
-            database=os.environ.get('DB_NAME', 'asistencia_db'),
-            user=os.environ.get('DB_USER', 'postgres'),
-            password=os.environ.get('DB_PASSWORD', 'password')
-        )
-    
-    conn.cursor_factory = psycopg2.extras.RealDictCursor
-    return conn
-
-# ==============================================================================
+# ======================================================================
 # CAPA 1: UTILIDADES Y VALIDACIONES
-# ==============================================================================
+# ======================================================================
 
 class Validator:
     @staticmethod
     def is_weekend(date_str: str) -> bool:
-        """Devuelve True si la fecha es Sábado o Domingo."""
         try:
             d = date.fromisoformat(date_str)
             return d.weekday() >= 5
@@ -64,25 +35,20 @@ class Validator:
 
     @staticmethod
     def is_future_date(date_str: str) -> bool:
-        """Devuelve True si la fecha es posterior a hoy."""
         try:
             d = date.fromisoformat(date_str)
             return d > date.today()
         except ValueError:
             return False
 
-    @staticmethod
-    def is_valid_text(text: str, min_len: int = 1) -> bool:
-        return text is not None and len(text.strip()) >= min_len
-
 class Security:
     @staticmethod
     def hash_password(password: str) -> str:
         return hashlib.sha256(password.encode()).hexdigest()
 
-# ==============================================================================
-# CAPA 2: GESTIÓN DE BASE DE DATOS (Database Manager - PostgreSQL)
-# ==============================================================================
+# ======================================================================
+# CAPA 2: GESTIÓN DE BASE DE DATOS (PostgreSQL)
+# ======================================================================
 
 class DatabaseManager:
     def __init__(self):
@@ -90,222 +56,198 @@ class DatabaseManager:
         self._init_db()
 
     def get_connection(self):
-        return get_db_connection()
+        """Obtiene conexión a PostgreSQL desde variables de entorno."""
+        database_url = os.environ.get('DATABASE_URL')
+        
+        try:
+            if database_url:
+                # Fix para Render que usa postgres:// a veces
+                if database_url.startswith('postgres://'):
+                    database_url = database_url.replace('postgres://', 'postgresql://', 1)
+                conn = psycopg2.connect(database_url, sslmode='require')
+            else:
+                # Configuración local (fallback)
+                conn = psycopg2.connect(
+                    host=os.environ.get('DB_HOST', 'localhost'),
+                    port=os.environ.get('DB_PORT', '5432'),
+                    database=os.environ.get('DB_NAME', 'asistencia_db'),
+                    user=os.environ.get('DB_USER', 'postgres'),
+                    password=os.environ.get('DB_PASSWORD', 'password')
+                )
+            return conn
+        except Exception as e:
+            print(f"Error de conexión a DB: {e}")
+            return None
 
     def _init_db(self):
-        """Inicializa el esquema de PostgreSQL."""
-        with self.lock:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            # Crear tablas con sintaxis PostgreSQL
-            queries = [
-                """
-                CREATE TABLE IF NOT EXISTS Usuarios (
-                    id SERIAL PRIMARY KEY,
-                    username VARCHAR(50) NOT NULL UNIQUE,
-                    password VARCHAR(64) NOT NULL,
-                    role VARCHAR(20) NOT NULL
-                )
-                """,
-                """
-                CREATE TABLE IF NOT EXISTS Ciclos (
-                    id SERIAL PRIMARY KEY,
-                    nombre VARCHAR(20) NOT NULL UNIQUE,
-                    activo BOOLEAN DEFAULT FALSE
-                )
-                """,
-                """
-                CREATE TABLE IF NOT EXISTS Cursos (
-                    id SERIAL PRIMARY KEY,
-                    nombre VARCHAR(100) NOT NULL,
-                    ciclo_id INTEGER REFERENCES Ciclos(id) ON DELETE CASCADE
-                )
-                """,
-                """
-                CREATE TABLE IF NOT EXISTS Alumnos (
-                    id SERIAL PRIMARY KEY,
-                    curso_id INTEGER NOT NULL REFERENCES Cursos(id) ON DELETE CASCADE,
-                    nombre VARCHAR(200) NOT NULL,
-                    dni VARCHAR(20),
-                    observaciones TEXT,
-                    tutor_nombre VARCHAR(200),
-                    tutor_telefono VARCHAR(50),
-                    UNIQUE(curso_id, nombre)
-                )
-                """,
-                """
-                CREATE TABLE IF NOT EXISTS Asistencia (
-                    id SERIAL PRIMARY KEY,
-                    alumno_id INTEGER NOT NULL REFERENCES Alumnos(id) ON DELETE CASCADE,
-                    fecha DATE NOT NULL,
-                    status VARCHAR(2) NOT NULL,
-                    UNIQUE(alumno_id, fecha)
-                )
-                """,
-                """
-                CREATE TABLE IF NOT EXISTS Requisitos (
-                    id SERIAL PRIMARY KEY,
-                    curso_id INTEGER NOT NULL REFERENCES Cursos(id) ON DELETE CASCADE,
-                    descripcion VARCHAR(500) NOT NULL
-                )
-                """,
-                """
-                CREATE TABLE IF NOT EXISTS Requisitos_Cumplidos (
-                    requisito_id INTEGER NOT NULL REFERENCES Requisitos(id) ON DELETE CASCADE,
-                    alumno_id INTEGER NOT NULL REFERENCES Alumnos(id) ON DELETE CASCADE,
-                    PRIMARY KEY (requisito_id, alumno_id)
-                )
-                """
-            ]
-            
-            for q in queries:
-                cursor.execute(q)
+        conn = self.get_connection()
+        if not conn:
+            print("CRÍTICO: No se pudo conectar a la base de datos.")
+            return
 
-            # Datos Semilla (Seed Data)
-            cursor.execute("SELECT COUNT(*) FROM Usuarios")
-            if cursor.fetchone()['count'] == 0:
-                cursor.execute(
-                    "INSERT INTO Usuarios (username, password, role) VALUES (%s, %s, %s)",
-                    ("admin", Security.hash_password("admin"), "admin")
-                )
-            
-            cursor.execute("SELECT COUNT(*) FROM Ciclos")
-            if cursor.fetchone()['count'] == 0:
-                anio = str(date.today().year)
-                cursor.execute(
-                    "INSERT INTO Ciclos (nombre, activo) VALUES (%s, TRUE) RETURNING id",
-                    (anio,)
-                )
-                cid = cursor.fetchone()['id']
-                cursor.execute(
-                    "UPDATE Cursos SET ciclo_id = %s WHERE ciclo_id IS NULL",
-                    (cid,)
-                )
+        try:
+            with conn.cursor() as cursor:
+                # Tablas con sintaxis PostgreSQL (SERIAL en lugar de AUTOINCREMENT)
+                queries = [
+                    """CREATE TABLE IF NOT EXISTS Usuarios (
+                        id SERIAL PRIMARY KEY, 
+                        username TEXT NOT NULL UNIQUE, 
+                        password TEXT NOT NULL, 
+                        role TEXT NOT NULL
+                    )""",
+                    """CREATE TABLE IF NOT EXISTS Ciclos (
+                        id SERIAL PRIMARY KEY, 
+                        nombre TEXT NOT NULL UNIQUE, 
+                        activo INTEGER DEFAULT 0
+                    )""",
+                    """CREATE TABLE IF NOT EXISTS Cursos (
+                        id SERIAL PRIMARY KEY, 
+                        nombre TEXT NOT NULL, 
+                        ciclo_id INTEGER REFERENCES Ciclos(id) ON DELETE CASCADE
+                    )""",
+                    """CREATE TABLE IF NOT EXISTS Alumnos (
+                        id SERIAL PRIMARY KEY, 
+                        curso_id INTEGER NOT NULL REFERENCES Cursos(id) ON DELETE CASCADE, 
+                        nombre TEXT NOT NULL, 
+                        dni TEXT, 
+                        observaciones TEXT, 
+                        tutor_nombre TEXT, 
+                        tutor_telefono TEXT, 
+                        UNIQUE(curso_id, nombre)
+                    )""",
+                    """CREATE TABLE IF NOT EXISTS Asistencia (
+                        id SERIAL PRIMARY KEY, 
+                        alumno_id INTEGER NOT NULL REFERENCES Alumnos(id) ON DELETE CASCADE, 
+                        fecha TEXT NOT NULL, 
+                        status TEXT NOT NULL, 
+                        UNIQUE(alumno_id, fecha)
+                    )""",
+                    """CREATE TABLE IF NOT EXISTS Requisitos (
+                        id SERIAL PRIMARY KEY, 
+                        curso_id INTEGER NOT NULL REFERENCES Cursos(id) ON DELETE CASCADE, 
+                        descripcion TEXT NOT NULL
+                    )""",
+                    """CREATE TABLE IF NOT EXISTS Requisitos_Cumplidos (
+                        requisito_id INTEGER NOT NULL REFERENCES Requisitos(id) ON DELETE CASCADE, 
+                        alumno_id INTEGER NOT NULL REFERENCES Alumnos(id) ON DELETE CASCADE, 
+                        PRIMARY KEY (requisito_id, alumno_id)
+                    )"""
+                ]
+                
+                for q in queries:
+                    cursor.execute(q)
 
-            conn.commit()
+                # Seed Data (Admin)
+                cursor.execute("SELECT COUNT(*) FROM Usuarios")
+                if cursor.fetchone()[0] == 0:
+                    cursor.execute("INSERT INTO Usuarios (username, password, role) VALUES (%s, %s, %s)", 
+                                   ("admin", Security.hash_password("admin"), "admin"))
+                
+                # Seed Data (Ciclo por defecto)
+                cursor.execute("SELECT COUNT(*) FROM Ciclos")
+                if cursor.fetchone()[0] == 0:
+                    anio = str(date.today().year)
+                    cursor.execute("INSERT INTO Ciclos (nombre, activo) VALUES (%s, 1) RETURNING id", (anio,))
+                    # cid = cursor.fetchone()[0] # No hay cursos viejos en DB limpia
+
+                conn.commit()
+                print("Base de datos PostgreSQL inicializada correctamente.")
+        except Exception as e:
+            print(f"Error inicializando DB: {e}")
+            conn.rollback()
+        finally:
             conn.close()
 
-    # --- Métodos CRUD Genéricos ---
-    
+    # --- Métodos CRUD ---
+
     def fetch_all(self, query, params=()):
-        """Ejecuta query y retorna lista de diccionarios."""
-        with self.lock:
-            conn = self.get_connection()
-            try:
-                cursor = conn.cursor()
+        conn = self.get_connection()
+        if not conn: return []
+        try:
+            # RealDictCursor permite acceder a las columnas por nombre
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
                 cursor.execute(query, params)
-                rows = cursor.fetchall()
-                return [dict(row) for row in rows]
-            finally:
-                conn.close()
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            print(f"Fetch All Error: {e}")
+            return []
+        finally:
+            conn.close()
 
     def fetch_one(self, query, params=()):
-        """Ejecuta query y retorna un diccionario o None."""
-        with self.lock:
-            conn = self.get_connection()
-            try:
-                cursor = conn.cursor()
+        conn = self.get_connection()
+        if not conn: return None
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
                 cursor.execute(query, params)
                 row = cursor.fetchone()
                 return dict(row) if row else None
-            finally:
-                conn.close()
+        except Exception as e:
+            print(f"Fetch One Error: {e}")
+            return None
+        finally:
+            conn.close()
 
     def execute_query(self, query, params=()):
-        """Ejecuta query de modificación (INSERT, UPDATE, DELETE)."""
-        with self.lock:
-            conn = self.get_connection()
-            try:
-                cursor = conn.cursor()
+        conn = self.get_connection()
+        if not conn: return False
+        try:
+            with conn.cursor() as cursor:
                 cursor.execute(query, params)
-                conn.commit()
-                return True
-            except psycopg2.Error as e:
-                print(f"DB Error: {e}")
-                conn.rollback()
-                return False
-            finally:
-                conn.close()
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"Execute Error: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
 
-    # --- Métodos Específicos de Negocio ---
-
-    def delete_alumno(self, alumno_id):
-        """Elimina un alumno y sus registros relacionados."""
-        with self.lock:
-            conn = self.get_connection()
-            try:
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM Requisitos_Cumplidos WHERE alumno_id = %s", (alumno_id,))
-                cursor.execute("DELETE FROM Asistencia WHERE alumno_id = %s", (alumno_id,))
-                cursor.execute("DELETE FROM Alumnos WHERE id = %s", (alumno_id,))
-                conn.commit()
-                return True
-            except psycopg2.Error as e:
-                print(f"Error al eliminar alumno: {e}")
-                conn.rollback()
-                return False
-            finally:
-                conn.close()
+    # --- Lógica de Negocio ---
 
     def authenticate(self, username, password):
-        user = self.fetch_one(
-            "SELECT * FROM Usuarios WHERE username = %s", 
-            (username,)
-        )
+        user = self.fetch_one("SELECT * FROM Usuarios WHERE username = %s", (username,))
         if user and user['password'] == Security.hash_password(password):
             return user
         return None
 
     def get_ciclo_activo(self):
-        return self.fetch_one("SELECT * FROM Ciclos WHERE activo = TRUE")
+        return self.fetch_one("SELECT * FROM Ciclos WHERE activo = 1")
 
     def get_cursos_activos(self):
         ciclo = self.get_ciclo_activo()
-        if not ciclo: 
-            return []
-        return self.fetch_all(
-            "SELECT * FROM Cursos WHERE ciclo_id = %s ORDER BY nombre", 
-            (ciclo['id'],)
-        )
+        if not ciclo: return []
+        return self.fetch_all("SELECT * FROM Cursos WHERE ciclo_id = %s ORDER BY nombre", (ciclo['id'],))
 
     def get_alumnos_curso(self, curso_id):
-        return self.fetch_all(
-            "SELECT * FROM Alumnos WHERE curso_id = %s ORDER BY nombre", 
-            (curso_id,)
-        )
+        return self.fetch_all("SELECT * FROM Alumnos WHERE curso_id = %s ORDER BY nombre", (curso_id,))
 
     def get_asistencia_fecha(self, curso_id, fecha):
-        rows = self.fetch_all(
-            """SELECT alumno_id, status FROM Asistencia 
-               WHERE fecha = %s AND alumno_id IN 
-               (SELECT id FROM Alumnos WHERE curso_id=%s)""", 
-            (fecha, curso_id)
-        )
+        rows = self.fetch_all("SELECT alumno_id, status FROM Asistencia WHERE fecha = %s AND alumno_id IN (SELECT id FROM Alumnos WHERE curso_id=%s)", (fecha, curso_id))
         return {row['alumno_id']: row['status'] for row in rows}
 
     def registrar_asistencia(self, alumno_id, fecha, status):
-        return self.execute_query(
-            """INSERT INTO Asistencia (alumno_id, fecha, status) 
-               VALUES (%s, %s, %s) 
-               ON CONFLICT (alumno_id, fecha) 
-               DO UPDATE SET status = EXCLUDED.status""", 
-            (alumno_id, fecha, status)
-        )
+        # Postgres UPSERT
+        query = """
+            INSERT INTO Asistencia (alumno_id, fecha, status) 
+            VALUES (%s, %s, %s)
+            ON CONFLICT (alumno_id, fecha) 
+            DO UPDATE SET status = EXCLUDED.status
+        """
+        return self.execute_query(query, (alumno_id, fecha, status))
 
     def get_reporte_curso(self, curso_id, start_date, end_date):
         alumnos = self.get_alumnos_curso(curso_id)
-        asistencias = self.fetch_all(
-            """SELECT alumno_id, status FROM Asistencia 
-               WHERE fecha >= %s AND fecha <= %s 
-               AND alumno_id IN (SELECT id FROM Alumnos WHERE curso_id=%s)""", 
-            (start_date, end_date, curso_id)
-        )
+        asistencias = self.fetch_all("""
+            SELECT alumno_id, status 
+            FROM Asistencia 
+            WHERE fecha >= %s AND fecha <= %s 
+            AND alumno_id IN (SELECT id FROM Alumnos WHERE curso_id=%s)
+        """, (start_date, end_date, curso_id))
 
         asis_map = {}
         for r in asistencias:
-            if r['alumno_id'] not in asis_map: 
-                asis_map[r['alumno_id']] = []
+            if r['alumno_id'] not in asis_map: asis_map[r['alumno_id']] = []
             asis_map[r['alumno_id']].append(r['status'])
 
         reporte = []
@@ -331,32 +273,22 @@ class DatabaseManager:
         return reporte
     
     def get_historial_alumno(self, alumno_id):
-        return self.fetch_all(
-            "SELECT fecha, status FROM Asistencia WHERE alumno_id = %s ORDER BY fecha DESC", 
-            (alumno_id,)
-        )
+        return self.fetch_all("SELECT fecha, status FROM Asistencia WHERE alumno_id = %s ORDER BY fecha DESC", (alumno_id,))
 
     def search_alumnos(self, term):
-        term = f"%{term}%"
-        return self.fetch_all(
-            """SELECT a.*, c.nombre as curso_nombre, ci.nombre as ciclo_nombre 
-               FROM Alumnos a 
-               JOIN Cursos c ON a.curso_id = c.id 
-               JOIN Ciclos ci ON c.ciclo_id = ci.id
-               WHERE (a.nombre ILIKE %s OR a.dni ILIKE %s) AND ci.activo = TRUE
-               ORDER BY a.nombre""", 
-            (term, term)
-        )
+        term_like = f"%{term}%"
+        return self.fetch_all("""
+            SELECT a.*, c.nombre as curso_nombre, ci.nombre as ciclo_nombre 
+            FROM Alumnos a 
+            JOIN Cursos c ON a.curso_id = c.id 
+            JOIN Ciclos ci ON c.ciclo_id = ci.id
+            WHERE (a.nombre ILIKE %s OR a.dni ILIKE %s) AND ci.activo = 1
+            ORDER BY a.nombre
+        """, (term_like, term_like))
 
     def get_requisitos_estado(self, alumno_id, curso_id):
-        reqs = self.fetch_all(
-            "SELECT * FROM Requisitos WHERE curso_id = %s", 
-            (curso_id,)
-        )
-        cumplidos_raw = self.fetch_all(
-            "SELECT requisito_id FROM Requisitos_Cumplidos WHERE alumno_id = %s", 
-            (alumno_id,)
-        )
+        reqs = self.fetch_all("SELECT * FROM Requisitos WHERE curso_id = %s", (curso_id,))
+        cumplidos_raw = self.fetch_all("SELECT requisito_id FROM Requisitos_Cumplidos WHERE alumno_id = %s", (alumno_id,))
         cumplidos_ids = {r['requisito_id'] for r in cumplidos_raw}
         
         result = []
@@ -368,33 +300,94 @@ class DatabaseManager:
             })
         return result
 
-# Instancia Global del Gestor de BD
+    # --- Admin DB ---
+    def get_ciclos(self):
+        return self.fetch_all("SELECT * FROM Ciclos ORDER BY nombre DESC")
+
+    def add_ciclo(self, nombre):
+        conn = self.get_connection()
+        if not conn: return False
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("UPDATE Ciclos SET activo = 0")
+                cursor.execute("INSERT INTO Ciclos (nombre, activo) VALUES (%s, 1)", (nombre,))
+            conn.commit()
+            return True
+        except: 
+            conn.rollback()
+            return False
+        finally: conn.close()
+
+    def activar_ciclo(self, cid):
+        conn = self.get_connection()
+        if not conn: return
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("UPDATE Ciclos SET activo = 0")
+                cursor.execute("UPDATE Ciclos SET activo = 1 WHERE id = %s", (cid,))
+            conn.commit()
+        except: pass
+        finally: conn.close()
+
+    def get_users(self):
+        return self.fetch_all("SELECT * FROM Usuarios")
+
+    def add_user(self, u, p, r):
+        return self.execute_query("INSERT INTO Usuarios (username, password, role) VALUES (%s, %s, %s)", (u, Security.hash_password(p), r))
+
+    def delete_user(self, uid):
+        return self.execute_query("DELETE FROM Usuarios WHERE id = %s", (uid,))
+    
+    def add_curso(self, nombre, ciclo_id):
+        return self.execute_query("INSERT INTO Cursos (nombre, ciclo_id) VALUES (%s, %s)", (nombre, ciclo_id))
+    
+    def delete_curso(self, cid):
+        return self.execute_query("DELETE FROM Cursos WHERE id = %s", (cid,))
+    
+    def delete_alumno(self, aid):
+        return self.execute_query("DELETE FROM Alumnos WHERE id = %s", (aid,))
+    
+    def add_alumno(self, curso_id, nombre, dni, obs, tn, tt):
+        return self.execute_query("INSERT INTO Alumnos (curso_id, nombre, dni, observaciones, tutor_nombre, tutor_telefono) VALUES (%s, %s, %s, %s, %s, %s)", 
+                                  (curso_id, nombre, dni, obs, tn, tt))
+
+    def update_alumno(self, aid, nombre, dni, obs, tn, tt):
+        return self.execute_query("UPDATE Alumnos SET nombre=%s, dni=%s, observaciones=%s, tutor_nombre=%s, tutor_telefono=%s WHERE id=%s", 
+                                  (nombre, dni, obs, tn, tt, aid))
+
+    def add_requisito(self, cid, desc):
+        return self.execute_query("INSERT INTO Requisitos (curso_id, descripcion) VALUES (%s, %s)", (cid, desc))
+    
+    def delete_requisito(self, rid):
+        return self.execute_query("DELETE FROM Requisitos WHERE id=%s", (rid,))
+    
+    def toggle_requisito(self, rid, aid, val):
+        if val:
+            return self.execute_query("INSERT INTO Requisitos_Cumplidos (requisito_id, alumno_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (rid, aid))
+        else:
+            return self.execute_query("DELETE FROM Requisitos_Cumplidos WHERE requisito_id=%s AND alumno_id=%s", (rid, aid))
+
 db = DatabaseManager()
 
-# ==============================================================================
-# CAPA 3: INTERFAZ DE USUARIO (Vistas y Componentes)
-# ==============================================================================
+# ======================================================================
+# CAPA 3: INTERFAZ DE USUARIO (Vistas)
+# ======================================================================
 
 THEME = {
-    "primary": "#3F51B5",
+    "primary": "blue",
     "secondary": "#1A237E",
     "bg": "#F5F7FB",
     "card": "#FFFFFF",
-    "danger": "#E53935",
-    "success": "#43A047",
-    "warning": "#FB8C00"
+    "danger": "red",
+    "success": "green",
+    "warning": "orange"
 }
 
 def create_card(content, padding=15, on_click=None):
     return ft.Container(
-        content=content, 
-        padding=padding, 
-        bgcolor=THEME["card"], 
-        border_radius=8,
-        shadow=ft.BoxShadow(blur_radius=5, color="#00000030", offset=ft.Offset(0, 2)),
-        margin=ft.margin.only(bottom=10), 
-        on_click=on_click,
-        animate=ft.animation.Animation(200, "easeOut")
+        content=content, padding=padding, bgcolor=THEME["card"], border_radius=8,
+        shadow=ft.BoxShadow(blur_radius=5, color="black12", offset=ft.Offset(0, 2)),
+        margin=ft.margin.only(bottom=10), on_click=on_click
     )
 
 def show_snack(page, message, color=THEME["success"]):
@@ -402,10 +395,9 @@ def show_snack(page, message, color=THEME["success"]):
     page.snack_bar.open = True
     page.update()
 
-# --- VISTA: LOGIN ---
 def view_login(page: ft.Page):
-    user_input = ft.TextField(label="Usuario", width=300, bgcolor="white", border_radius=8, prefix_icon=ft.icons.PERSON)
-    pass_input = ft.TextField(label="Contraseña", password=True, width=300, bgcolor="white", border_radius=8, prefix_icon=ft.icons.LOCK, can_reveal_password=True)
+    user_input = ft.TextField(label="Usuario", width=300, bgcolor="white")
+    pass_input = ft.TextField(label="Contraseña", password=True, width=300, bgcolor="white", can_reveal_password=True)
 
     def login_action(e):
         user = db.authenticate(user_input.value, pass_input.value)
@@ -415,595 +407,297 @@ def view_login(page: ft.Page):
         else:
             show_snack(page, "Credenciales incorrectas", THEME["danger"])
 
-    content = ft.Container(
-        content=ft.Column([
-            ft.Icon(ft.icons.SCHOOL, size=80, color=THEME["primary"]),
-            ft.Text("Sistema de Asistencia", size=28, weight="bold", color=THEME["secondary"]),
-            ft.Text("UNSAM", size=18, color="grey"),
-            ft.Divider(height=30, color="transparent"),
-            ft.Container(
-                content=ft.Column([
-                    user_input, ft.Container(height=10), pass_input, ft.Container(height=20),
-                    ft.ElevatedButton("INGRESAR", on_click=login_action, width=300, height=50, bgcolor=THEME["primary"], color="white")
-                ], horizontal_alignment="center"),
-                padding=40, bgcolor="white", border_radius=20,
-                shadow=ft.BoxShadow(blur_radius=20, color="#0000001A")
-            )
-        ], horizontal_alignment="center"),
-        alignment=ft.alignment.center, expand=True, bgcolor=THEME["bg"]
-    )
-    return ft.View("/", [content])
+    return ft.View("/", [
+        ft.Container(
+            content=ft.Column([
+                ft.Icon("school", size=80, color=THEME["primary"]),
+                ft.Text("Sistema de Asistencia", size=24, weight="bold"),
+                ft.Text("UNSAM", size=16, color="grey"),
+                ft.Divider(height=20, color="transparent"),
+                user_input, pass_input,
+                ft.ElevatedButton("INGRESAR", on_click=login_action, width=300, height=50, bgcolor=THEME["primary"], color="white")
+            ], horizontal_alignment="center"),
+            alignment=ft.alignment.center, expand=True, bgcolor=THEME["bg"]
+        )
+    ])
 
-# --- VISTA: DASHBOARD ---
 def view_dashboard(page: ft.Page):
     user = page.session.get("user")
-    if not user: 
-        return view_login(page)
-
+    if not user: return view_login(page)
     ciclo = db.get_ciclo_activo()
     ciclo_txt = ciclo['nombre'] if ciclo else "Sin Ciclo Activo"
-    
-    search_input = ft.TextField(hint_text="Buscar alumno...", expand=True, bgcolor="white", border_radius=20, border_color="transparent")
+    search_input = ft.TextField(hint_text="Buscar alumno...", expand=True, bgcolor="white")
     
     def search_action(e):
         if search_input.value:
             page.session.set("search_term", search_input.value)
             page.go("/search")
 
-    search_input.on_submit = search_action
-
     cursos_grid = ft.Column(scroll="auto", expand=True)
 
     def load_cursos():
         cursos_grid.controls.clear()
         cursos = db.get_cursos_activos()
-        if not cursos:
-            cursos_grid.controls.append(ft.Text("No hay cursos activos o creados.", italic=True, color="grey"))
-        
         for c in cursos:
             def on_click_curso(e, cid=c['id'], cname=c['nombre']):
                 page.session.set("curso_id", cid)
                 page.session.set("curso_nombre", cname)
                 page.go("/curso")
-            
             def on_delete_curso(e, cid=c['id']):
-                if db.execute_query("DELETE FROM Cursos WHERE id=%s", (cid,)):
-                    load_cursos()
-                    page.update()
+                if db.delete_curso(cid): load_cursos(); page.update()
 
-            actions_row = [ft.IconButton(icon=ft.icons.ARROW_FORWARD, icon_color=THEME["primary"], on_click=on_click_curso)]
+            actions_row = [ft.IconButton("arrow_forward", icon_color=THEME["primary"], on_click=on_click_curso)]
             if user['role'] == 'admin':
-                actions_row.append(ft.IconButton(icon=ft.icons.DELETE, icon_color=THEME["danger"], on_click=on_delete_curso))
+                actions_row.append(ft.IconButton("delete", icon_color=THEME["danger"], on_click=on_delete_curso))
 
-            card = create_card(ft.Row([
-                ft.Row([
-                    ft.Container(content=ft.Icon(ft.icons.CLASS_, color="white"), bgcolor=THEME["primary"], border_radius=10, padding=10),
-                    ft.Text(c['nombre'], weight="bold", size=18, color=THEME["secondary"])
-                ]),
+            cursos_grid.controls.append(create_card(ft.Row([
+                ft.Row([ft.Icon("book", color=THEME["primary"]), ft.Text(c['nombre'], weight="bold", size=16)]),
                 ft.Row(actions_row)
-            ], alignment="spaceBetween"))
-            cursos_grid.controls.append(card)
+            ], alignment="spaceBetween")))
         page.update()
 
     load_cursos()
-
-    header_actions = [ft.IconButton(icon=ft.icons.LOGOUT, icon_color="white", on_click=lambda _: page.go("/"))]
-    if user['role'] == 'admin':
-        header_actions.insert(0, ft.IconButton(icon=ft.icons.SETTINGS, icon_color="white", on_click=lambda _: page.go("/admin")))
-
     return ft.View("/dashboard", [
-        ft.AppBar(title=ft.Text("Panel Principal"), bgcolor=THEME["primary"], color="white", center_title=True, actions=header_actions),
+        ft.AppBar(title=ft.Text("Panel Principal"), bgcolor=THEME["primary"], color="white", 
+                  actions=[ft.IconButton("settings", icon_color="white", on_click=lambda _: page.go("/admin")) if user['role']=='admin' else ft.Container(),
+                           ft.IconButton("logout", icon_color="white", on_click=lambda _: page.go("/"))]),
         ft.Container(content=ft.Column([
-            ft.Container(content=ft.Row([
-                ft.Text(f"Ciclo: {ciclo_txt}", color=THEME["primary"], weight="bold"),
-                ft.Container(content=search_input, width=300)
-            ], alignment="spaceBetween"), padding=ft.padding.only(bottom=20)),
-            ft.Row([
-                ft.Text("Mis Cursos", size=24, weight="bold", color=THEME["secondary"]),
-                ft.ElevatedButton("Nuevo Curso", icon=ft.icons.ADD, bgcolor=THEME["success"], color="white", 
-                                  on_click=lambda _: page.go("/form_curso") if ciclo else show_snack(page, "Falta ciclo activo", THEME["danger"]))
-            ], alignment="spaceBetween"),
-            ft.Container(height=10),
+            ft.Text(f"Ciclo: {ciclo_txt}", color=THEME["primary"], weight="bold"),
+            ft.Row([search_input, ft.IconButton("search", on_click=search_action)]),
+            ft.Row([ft.Text("Mis Cursos", size=20, weight="bold"), ft.IconButton("add_circle", icon_color="green", icon_size=30, on_click=lambda _: page.go("/form_curso"))], alignment="spaceBetween"),
             cursos_grid
-        ]), padding=30, bgcolor=THEME["bg"], expand=True)
+        ]), padding=20, bgcolor=THEME["bg"], expand=True)
     ])
 
-# --- VISTA: DETALLE DE CURSO ---
 def view_curso(page: ft.Page):
     curso_id = page.session.get("curso_id")
-    curso_nombre = page.session.get("curso_nombre")
-    if not curso_id: 
-        return view_dashboard(page)
-    
-    user = page.session.get("user")
-    user_role = user['role'] if user else 'user'
-
+    if not curso_id: return view_dashboard(page)
     alumnos_list = ft.Column(scroll="auto", expand=True)
 
     def load_alumnos():
         alumnos_list.controls.clear()
-        alumnos = db.get_alumnos_curso(curso_id)
-        
-        if not alumnos:
-            alumnos_list.controls.append(ft.Text("No hay alumnos matriculados.", italic=True, color="grey"))
-        
-        for a in alumnos:
-            def on_detail(e, aid=a['id']):
-                page.session.set("alumno_id", aid)
-                page.go("/student_detail")
+        for a in db.get_alumnos_curso(curso_id):
+            def go_det(aid): page.session.set("alumno_id", aid); page.go("/student_detail")
+            def go_edit(aid): page.session.set("alumno_id_edit", aid); page.go("/form_student")
+            def go_del(aid): db.delete_alumno(aid); load_alumnos(); page.update()
             
-            def on_edit(e, aid=a['id']):
-                page.session.set("alumno_id_edit", aid)
-                page.go("/form_student")
-            
-            def on_delete(e, aid=a['id']):
-                if db.delete_alumno(aid):
-                    load_alumnos()
-                    page.update()
-
-            menu_items = [ft.PopupMenuItem(text="Editar", icon=ft.icons.EDIT, on_click=on_edit)]
-            if user_role == 'admin':
-                menu_items.append(ft.PopupMenuItem(text="Borrar", icon=ft.icons.DELETE, on_click=on_delete))
-
-            card = create_card(ft.ListTile(
-                leading=ft.CircleAvatar(content=ft.Text(a['nombre'][0] if a['nombre'] else "?"), bgcolor="#E3F2FD", color=THEME["primary"]),
-                title=ft.Text(a['nombre'], weight="bold"),
-                subtitle=ft.Text(f"DNI: {a['dni'] or '-'}"),
-                on_click=on_detail,
-                trailing=ft.PopupMenuButton(icon=ft.icons.MORE_VERT, items=menu_items)
-            ), padding=0)
-            alumnos_list.controls.append(card)
+            alumnos_list.controls.append(create_card(ft.ListTile(
+                leading=ft.Icon("person"), title=ft.Text(a['nombre']), subtitle=ft.Text(f"DNI: {a['dni'] or '-'}"),
+                on_click=lambda e, aid=a['id']: go_det(aid),
+                trailing=ft.PopupMenuButton(items=[ft.PopupMenuItem("Editar", on_click=lambda e, aid=a['id']: go_edit(aid)), ft.PopupMenuItem("Borrar", on_click=lambda e, aid=a['id']: go_del(aid))])
+            ), padding=0))
         page.update()
 
     load_alumnos()
-
     return ft.View("/curso", [
-        ft.AppBar(leading=ft.IconButton(icon=ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: page.go("/dashboard")), 
-                  title=ft.Text(curso_nombre or "Curso"), bgcolor=THEME["primary"], color="white"),
+        ft.AppBar(leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard")), title=ft.Text(page.session.get("curso_nombre")), bgcolor=THEME["primary"], color="white"),
         ft.Container(content=ft.Column([
             ft.Row([
-                ft.ElevatedButton("Asistencia", icon=ft.icons.CHECK_CIRCLE, on_click=lambda _: page.go("/asistencia"), bgcolor=THEME["primary"], color="white", expand=True),
-                ft.ElevatedButton("Documentos", icon=ft.icons.ASSIGNMENT, on_click=lambda _: page.go("/pedidos"), bgcolor=THEME["warning"], color="white", expand=True),
-                ft.ElevatedButton("Reportes", icon=ft.icons.BAR_CHART, on_click=lambda _: page.go("/reportes"), bgcolor="#00897B", color="white", expand=True)
+                ft.ElevatedButton("Asistencia", icon="check", on_click=lambda _: page.go("/asistencia"), expand=True),
+                ft.ElevatedButton("Pedidos", icon="list", on_click=lambda _: page.go("/pedidos"), expand=True),
+                ft.ElevatedButton("Reportes", icon="bar_chart", on_click=lambda _: page.go("/reportes"), expand=True)
             ]),
             ft.Divider(),
-            ft.Row([
-                ft.Text("Alumnos", size=20, weight="bold", color=THEME["secondary"]),
-                ft.IconButton(icon=ft.icons.PERSON_ADD, icon_color="white", bgcolor=THEME["success"], 
-                              on_click=lambda _: (page.session.set("alumno_id_edit", None), page.go("/form_student")))
-            ], alignment="spaceBetween"),
+            ft.Row([ft.Text("Alumnos", size=18, weight="bold"), ft.IconButton("person_add", icon_color="green", on_click=lambda _: (page.session.set("alumno_id_edit", None), page.go("/form_student")))], alignment="spaceBetween"),
             alumnos_list
         ]), padding=20, bgcolor=THEME["bg"], expand=True)
     ])
 
-# --- VISTA: TOMAR ASISTENCIA ---
 def view_asistencia(page: ft.Page):
     curso_id = page.session.get("curso_id")
-    if not curso_id:
-        return view_dashboard(page)
-        
-    date_input = ft.TextField(label="Fecha", value=date.today().isoformat(), bgcolor="white", border_radius=10)
+    dp = ft.TextField(label="Fecha", value=date.today().isoformat(), bgcolor="white")
     list_col = ft.Column(scroll="auto", expand=True)
     inputs_map = {}
 
-    def load_status(e=None):
-        fecha = date_input.value
-        if Validator.is_future_date(fecha):
-            show_snack(page, "No se puede registrar asistencia futura", THEME["danger"])
-            return
-        if Validator.is_weekend(fecha):
-            show_snack(page, "Advertencia: Es fin de semana", THEME["warning"])
-
-        saved_data = db.get_asistencia_fecha(curso_id, fecha)
-        alumnos = db.get_alumnos_curso(curso_id)
-        
-        list_col.controls.clear()
-        inputs_map.clear()
-        
-        for a in alumnos:
-            status = saved_data.get(a['id'], "P")
-            dd = ft.Dropdown(
-                options=[ft.dropdown.Option(x) for x in ["P","T","A","J","S","N"]],
-                value=status, width=100, bgcolor="white", border_radius=8
-            )
-            inputs_map[a['id']] = dd
-            list_col.controls.append(create_card(
-                ft.Row([ft.Text(a['nombre'], weight="bold", size=16), dd], alignment="spaceBetween"), 
-                padding=10
-            ))
-        page.update()
-
-    def save_all(e):
-        fecha = date_input.value
-        if Validator.is_future_date(fecha):
-             show_snack(page, "Error: Fecha futura", THEME["danger"])
-             return
-             
-        count = 0
-        for aid, dd in inputs_map.items():
-            db.registrar_asistencia(aid, fecha, dd.value)
-            count += 1
-        show_snack(page, f"Guardados {count} registros.")
-        page.go("/curso")
-
-    load_status()
-
-    return ft.View("/asistencia", [
-        ft.AppBar(leading=ft.IconButton(icon=ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: page.go("/curso")), 
-                  title=ft.Text("Tomar Asistencia"), bgcolor=THEME["primary"], color="white"),
-        ft.Container(content=ft.Column([
-            create_card(ft.Row([date_input, ft.IconButton(icon=ft.icons.REFRESH, icon_color=THEME["primary"], on_click=load_status)])),
-            ft.ElevatedButton("GUARDAR TODO", on_click=save_all, bgcolor=THEME["success"], color="white", height=50, width=float("inf")),
-            ft.Container(height=10),
-            list_col
-        ]), padding=20, bgcolor=THEME["bg"], expand=True)
-    ])
-
-# --- VISTA: REPORTES Y EXPORTACIÓN ---
-def view_reportes(page: ft.Page):
-    curso_id = page.session.get("curso_id")
-    if not curso_id:
-        return view_dashboard(page)
-        
-    d_start = ft.TextField(label="Desde", value=date.today().replace(month=1, day=1).isoformat(), width=150, bgcolor="white")
-    d_end = ft.TextField(label="Hasta", value=date.today().isoformat(), width=150, bgcolor="white")
-    table_container = ft.Column(scroll="auto", expand=True)
-
-    def generate_report(e=None):
-        data = db.get_reporte_curso(curso_id, d_start.value, d_end.value)
-        rows = []
-        for d in data:
-            color = THEME["danger"] if d['faltas'] >= 25 else ("black" if d['faltas'] < 15 else THEME["warning"])
-            rows.append(ft.DataRow(cells=[
-                ft.DataCell(ft.Text(d['nombre'], color=color, weight="bold")),
-                ft.DataCell(ft.Text(str(d['p']))),
-                ft.DataCell(ft.Text(str(d['t']))),
-                ft.DataCell(ft.Text(str(d['a']))),
-                ft.DataCell(ft.Text(str(d['j']))),
-                ft.DataCell(ft.Text(str(d['s']))),
-                ft.DataCell(ft.Container(content=ft.Text(f"{d['faltas']}", color="white", weight="bold"), 
-                          bgcolor=color if color != "black" else "grey", padding=5, border_radius=5)),
-                ft.DataCell(ft.Text(f"{d['pct']}%"))
-            ]))
-        
-        dt = ft.DataTable(
-            columns=[
-                ft.DataColumn(ft.Text("Alumno")),
-                ft.DataColumn(ft.Text("P"), numeric=True),
-                ft.DataColumn(ft.Text("T"), numeric=True),
-                ft.DataColumn(ft.Text("A"), numeric=True),
-                ft.DataColumn(ft.Text("J"), numeric=True),
-                ft.DataColumn(ft.Text("S"), numeric=True),
-                ft.DataColumn(ft.Text("Faltas"), numeric=True),
-                ft.DataColumn(ft.Text("%"), numeric=True),
-            ],
-            rows=rows, bgcolor="white", border_radius=10, column_spacing=15, heading_row_color="#E3F2FD"
-        )
-        table_container.controls = [create_card(ft.Row([dt], scroll="always"), padding=0)]
-        page.update()
-
-    def export_excel(e):
-        if not pd or not xlsxwriter:
-            show_snack(page, "Librerías de Excel no instaladas", THEME["danger"])
-            return
-        
-        data = db.get_reporte_curso(curso_id, d_start.value, d_end.value)
-        if not data:
-            show_snack(page, "Sin datos para exportar", THEME["warning"])
-            return
-
-        df = pd.DataFrame(data)
-        df = df.drop(columns=['id', 'tutor_nombre', 'tutor_telefono', 'observaciones', 'total_registros'], errors='ignore')
-        df = df.rename(columns={'nombre':'Alumno', 'dni':'DNI', 'p':'Pres.', 't':'Tardes', 'a':'Aus.', 
-                                'j':'Just.', 's':'Susp.', 'faltas':'Total Faltas', 'pct':'% Ausentismo'})
-
-        output = io.BytesIO()
-        df.to_excel(output, index=False, engine='xlsxwriter')
-        output.seek(0)
-        
-        b64 = base64.b64encode(output.read()).decode()
-        filename = f"reporte_curso_{curso_id}.xlsx"
-        page.launch_url(f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}", web_window_name=filename)
-        show_snack(page, "Descarga iniciada", THEME["success"])
-
-    return ft.View("/reportes", [
-        ft.AppBar(leading=ft.IconButton(icon=ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: page.go("/curso")), 
-                  title=ft.Text("Reportes"), bgcolor=THEME["primary"], color="white"),
-        ft.Container(content=ft.Column([
-            create_card(ft.Row([d_start, d_end, ft.ElevatedButton("VER", on_click=generate_report, bgcolor=THEME["primary"], color="white")], alignment="center")),
-            ft.ElevatedButton("DESCARGAR EXCEL", icon=ft.icons.DOWNLOAD, bgcolor=THEME["success"], color="white", 
-                             width=float("inf"), on_click=export_excel),
-            ft.Container(height=10),
-            table_container
-        ]), padding=20, bgcolor=THEME["bg"], expand=True)
-    ])
-
-# --- VISTA: DETALLE ALUMNO ---
-def view_student_detail(page: ft.Page):
-    aid = page.session.get("alumno_id")
-    curso_id = page.session.get("curso_id")
-    if not aid: 
-        return view_dashboard(page)
-    
-    report_data = db.get_reporte_curso(curso_id, "2000-01-01", "2100-12-31")
-    stats = next((s for s in report_data if s['id'] == aid), None)
-    student_info = db.fetch_one("SELECT * FROM Alumnos WHERE id=%s", (aid,))
-    
-    if not student_info:
-        show_snack(page, "Alumno no encontrado", THEME["danger"])
-        return view_dashboard(page)
-        
-    reqs = db.get_requisitos_estado(aid, curso_id)
-
-    def stat_box(label, val, color="black"):
-        return ft.Container(
-            content=ft.Column([
-                ft.Text(str(val), size=22, weight="bold", color=color),
-                ft.Text(label, size=12, color="grey")
-            ], horizontal_alignment="center"),
-            padding=10, bgcolor="white", border_radius=8, expand=True, alignment=ft.alignment.center,
-            border=ft.border.all(1, "#EEEEEE")
-        )
-    
-    stat_row = ft.Row([
-        stat_box("Faltas", stats['faltas'] if stats else 0, THEME["danger"] if (stats and stats['faltas'] > 20) else "black"),
-        stat_box("Ausentismo", f"{stats['pct']}%" if stats else "0%"),
-        stat_box("Presentes", stats['p'] if stats else 0, THEME["success"])
-    ], spacing=10)
-
-    req_list = ft.Column()
-    for r in reqs:
-        icon = ft.icons.CHECK_CIRCLE if r['ok'] else ft.icons.CANCEL
-        color = THEME["success"] if r['ok'] else THEME["danger"]
-        req_list.controls.append(ft.Row([ft.Icon(icon, color=color), ft.Text(r['desc'])]))
-
-    def export_ficha(e):
-        if not pd: 
-            return show_snack(page, "Falta pandas", THEME["danger"])
-        
-        output = io.BytesIO()
-        writer = pd.ExcelWriter(output, engine='xlsxwriter')
-        
-        data_ficha = [
-            ["Nombre", student_info['nombre']], ["DNI", student_info['dni']],
-            ["Tutor", student_info['tutor_nombre']], ["Teléfono", student_info['tutor_telefono']],
-            ["Obs", student_info['observaciones']]
-        ]
-        pd.DataFrame(data_ficha, columns=["Campo", "Valor"]).to_excel(writer, sheet_name="Ficha", index=False)
-        
-        if stats:
-            pd.DataFrame([stats]).to_excel(writer, sheet_name="Estadisticas", index=False)
-        
-        hist = db.get_historial_alumno(aid)
-        if hist:
-            pd.DataFrame([dict(h) for h in hist]).to_excel(writer, sheet_name="Historial", index=False)
-        
-        writer.close()
-        output.seek(0)
-        b64 = base64.b64encode(output.read()).decode()
-        page.launch_url(f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}", 
-                       web_window_name=f"ficha_{aid}.xlsx")
-
-    content = create_card(ft.Column([
-        ft.Row([
-            ft.Icon(ft.icons.PERSON, size=50, color=THEME["primary"]),
-            ft.Column([
-                ft.Text(student_info['nombre'], size=24, weight="bold"),
-                ft.Text(f"DNI: {student_info['dni'] or '-'}", color="grey")
-            ])
-        ]),
-        ft.Divider(),
-        ft.Text("Estadísticas Anuales", weight="bold", color=THEME["primary"]),
-        stat_row,
-        ft.Divider(),
-        ft.Text("Información de Contacto", weight="bold"),
-        ft.Text(f"Tutor: {student_info['tutor_nombre'] or '-'} | Tel: {student_info['tutor_telefono'] or '-'}"),
-        ft.Text("Observaciones:", weight="bold", size=12),
-        ft.Text(student_info['observaciones'] or "-", italic=True),
-        ft.Divider(),
-        ft.Text("Documentación", weight="bold"),
-        req_list,
-        ft.Container(height=20),
-        ft.ElevatedButton("DESCARGAR FICHA COMPLETA", icon=ft.icons.DOWNLOAD, bgcolor="#00897B", 
-                         color="white", width=float("inf"), on_click=export_ficha)
-    ]), padding=25)
-
-    return ft.View("/student_detail", [
-        ft.AppBar(leading=ft.IconButton(icon=ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: page.go("/curso")), 
-                  title=ft.Text("Ficha Alumno"), bgcolor=THEME["primary"], color="white"),
-        ft.Container(content=ft.Column([content], scroll="auto"), padding=20, bgcolor=THEME["bg"], expand=True)
-    ])
-
-# --- VISTA: FORMULARIO ALUMNO ---
-def view_form_student(page: ft.Page):
-    curso_id = page.session.get("curso_id")
-    aid_edit = page.session.get("alumno_id_edit")
-    is_edit = aid_edit is not None
-    
-    nm = ft.TextField(label="Nombre Completo", bgcolor="white")
-    dni = ft.TextField(label="DNI", bgcolor="white")
-    tn = ft.TextField(label="Nombre Tutor", bgcolor="white")
-    tt = ft.TextField(label="Teléfono Tutor", bgcolor="white")
-    obs = ft.TextField(label="Observaciones", multiline=True, bgcolor="white")
-
-    if is_edit:
-        d = db.fetch_one("SELECT * FROM Alumnos WHERE id=%s", (aid_edit,))
-        if d:
-            nm.value = d['nombre']
-            dni.value = d['dni'] or ""
-            obs.value = d['observaciones'] or ""
-            tn.value = d['tutor_nombre'] or ""
-            tt.value = d['tutor_telefono'] or ""
-
-    def save(e):
-        if not nm.value:
-            show_snack(page, "Nombre obligatorio", THEME["danger"])
-            return
-        
-        if is_edit:
-            db.execute_query(
-                """UPDATE Alumnos SET nombre=%s, dni=%s, observaciones=%s, tutor_nombre=%s, tutor_telefono=%s 
-                   WHERE id=%s""", 
-                (nm.value, dni.value, obs.value, tn.value, tt.value, aid_edit)
-            )
-        else:
-            if not db.execute_query(
-                """INSERT INTO Alumnos (curso_id, nombre, dni, observaciones, tutor_nombre, tutor_telefono) 
-                    VALUES (%s,%s,%s,%s,%s,%s)""", 
-                (curso_id, nm.value, dni.value, obs.value, tn.value, tt.value)
-            ):
-                show_snack(page, "Error: Nombre duplicado", THEME["danger"])
-                return
-        
-        show_snack(page, "Guardado correctamente")
-        page.go("/curso")
-
-    return ft.View("/form_student", [
-        ft.AppBar(leading=ft.IconButton(icon=ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: page.go("/curso")), 
-                  title=ft.Text("Editar Alumno" if is_edit else "Nuevo Alumno"), bgcolor=THEME["primary"], color="white"),
-        ft.Container(content=create_card(ft.Column([
-            nm, dni, ft.Divider(), tn, tt, ft.Divider(), obs,
-            ft.ElevatedButton("GUARDAR", on_click=save, bgcolor=THEME["success"], color="white", width=float("inf"))
-        ])), padding=20, bgcolor=THEME["bg"], expand=True)
-    ])
-
-# --- OTRAS VISTAS ---
-def view_form_curso(page: ft.Page):
-    tf = ft.TextField(label="Nombre Curso", bgcolor="white")
-    def save(e):
-        ciclo = db.get_ciclo_activo()
-        if not ciclo: 
-            return show_snack(page, "No hay ciclo activo", THEME["danger"])
-        if db.execute_query(
-            "INSERT INTO Cursos (nombre, ciclo_id) VALUES (%s, %s)", 
-            (tf.value, ciclo['id'])
-        ):
-            page.go("/dashboard")
-        else: 
-            show_snack(page, "Error al crear", THEME["danger"])
-    return ft.View("/form_curso", [
-        ft.AppBar(leading=ft.IconButton(icon=ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: page.go("/dashboard")), 
-                  title=ft.Text("Nuevo Curso"), bgcolor=THEME["primary"], color="white"),
-        ft.Container(content=create_card(ft.Column([tf, ft.ElevatedButton("Crear", on_click=save, bgcolor=THEME["success"], color="white")])), 
-                    padding=20, bgcolor=THEME["bg"], expand=True)
-    ])
-
-def view_pedidos(page: ft.Page):
-    curso_id = page.session.get("curso_id")
-    if not curso_id:
-        return view_dashboard(page)
-        
-    req_dd = ft.Dropdown(label="Requisito", expand=True, bgcolor="white")
-    list_col = ft.Column(scroll="auto", expand=True)
-    
-    def load_checks(e=None):
-        list_col.controls.clear()
-        if not req_dd.value: 
-            return
-        rid = int(req_dd.value)
-        cumplidos = {r['alumno_id'] for r in db.fetch_all(
-            "SELECT alumno_id FROM Requisitos_Cumplidos WHERE requisito_id=%s", (rid,)
-        )}
-        
+    def load(e=None):
+        ex = db.get_asistencia_fecha(curso_id, dp.value)
+        list_col.controls.clear(); inputs_map.clear()
         for a in db.get_alumnos_curso(curso_id):
-            def on_chg(e, aid=a['id'], rid=rid):
-                if e.control.value: 
-                    db.execute_query(
-                        "INSERT INTO Requisitos_Cumplidos (requisito_id, alumno_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", 
-                        (rid, aid)
-                    )
-                else: 
-                    db.execute_query(
-                        "DELETE FROM Requisitos_Cumplidos WHERE requisito_id=%s AND alumno_id=%s", 
-                        (rid, aid)
-                    )
-            
-            list_col.controls.append(create_card(
-                ft.Checkbox(label=a['nombre'], value=(a['id'] in cumplidos), on_change=on_chg), 
-                padding=10
-            ))
+            dd = ft.Dropdown(options=[ft.dropdown.Option(x) for x in ["P","T","A","J","S","N"]], value=ex.get(a['id'], "P"), width=80, bgcolor="white")
+            inputs_map[a['id']] = dd
+            list_col.controls.append(create_card(ft.Row([ft.Text(a['nombre'], expand=True), dd]), padding=10))
         page.update()
 
-    def load_dd():
-        reqs = db.fetch_all("SELECT * FROM Requisitos WHERE curso_id=%s", (curso_id,))
-        req_dd.options = [ft.dropdown.Option(key=str(r['id']), text=r['descripcion']) for r in reqs]
-        if reqs: 
-            req_dd.value = str(reqs[0]['id'])
-            load_checks()
-        page.update()
+    def save(e):
+        if Validator.is_future_date(dp.value): return show_snack(page, "Fecha futura no permitida", THEME["danger"])
+        for aid, dd in inputs_map.items(): db.registrar_asistencia(aid, dp.value, dd.value)
+        show_snack(page, "Guardado"); page.go("/curso")
 
-    def add_req(e): 
-        page.go("/form_req")
-    
-    load_dd()
-    return ft.View("/pedidos", [
-        ft.AppBar(leading=ft.IconButton(icon=ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: page.go("/curso")), 
-                  title=ft.Text("Documentación"), bgcolor=THEME["primary"], color="white"),
-        ft.Container(content=ft.Column([
-            create_card(ft.Row([req_dd, ft.IconButton(icon=ft.icons.ADD, icon_color=THEME["primary"], on_click=add_req), 
-                               ft.IconButton(icon=ft.icons.REFRESH, on_click=lambda e: load_dd())])),
-            list_col
-        ]), padding=20, bgcolor=THEME["bg"], expand=True)
+    load()
+    return ft.View("/asistencia", [
+        ft.AppBar(leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso")), title=ft.Text("Asistencia"), bgcolor=THEME["primary"], color="white"),
+        ft.Container(content=ft.Column([ft.Row([dp, ft.IconButton("refresh", on_click=load)]), ft.ElevatedButton("GUARDAR", on_click=save, bgcolor="green", color="white"), list_col]), padding=20, bgcolor=THEME["bg"], expand=True)
     ])
 
-def view_form_req(page: ft.Page):
-    tf = ft.TextField(label="Descripción", bgcolor="white")
+def view_form_student(page: ft.Page):
+    aid = page.session.get("alumno_id_edit")
+    nm = ft.TextField(label="Nombre", bgcolor="white"); dni = ft.TextField(label="DNI", bgcolor="white")
+    obs = ft.TextField(label="Obs", bgcolor="white"); tn = ft.TextField(label="Tutor", bgcolor="white"); tt = ft.TextField(label="Tel", bgcolor="white")
+    
+    if aid:
+        a = db.fetch_one("SELECT * FROM Alumnos WHERE id=%s", (aid,))
+        if a: nm.value=a['nombre']; dni.value=a['dni']; obs.value=a['observaciones']; tn.value=a['tutor_nombre']; tt.value=a['tutor_telefono']
+
     def save(e):
-        if db.execute_query(
-            "INSERT INTO Requisitos (curso_id, descripcion) VALUES (%s, %s)", 
-            (page.session.get("curso_id"), tf.value)
-        ):
-            page.go("/pedidos")
-    return ft.View("/form_req", [
-        ft.AppBar(leading=ft.IconButton(icon=ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: page.go("/pedidos")), 
-                  title=ft.Text("Nuevo Requisito"), bgcolor=THEME["primary"], color="white"),
-        ft.Container(content=create_card(ft.Column([tf, ft.ElevatedButton("Guardar", on_click=save)])), 
-                    padding=20, bgcolor=THEME["bg"], expand=True)
+        if nm.value:
+            if aid: db.update_alumno(aid, nm.value, dni.value, obs.value, tn.value, tt.value)
+            else: db.add_alumno(page.session.get("curso_id"), nm.value, dni.value, obs.value, tn.value, tt.value)
+            page.go("/curso")
+            
+    return ft.View("/form_student", [
+        ft.AppBar(leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso")), title=ft.Text("Alumno"), bgcolor=THEME["primary"], color="white"),
+        ft.Container(content=create_card(ft.Column([nm, dni, obs, tn, tt, ft.ElevatedButton("Guardar", on_click=save, bgcolor="green", color="white")])), padding=20, bgcolor=THEME["bg"], expand=True)
+    ])
+
+def view_form_curso(page: ft.Page):
+    tf = ft.TextField(label="Nombre", bgcolor="white")
+    def save(e):
+        if db.add_curso(tf.value, db.get_ciclo_activo()['id']): page.go("/dashboard")
+        else: show_snack(page, "Error al crear", "red")
+    return ft.View("/form_curso", [
+        ft.AppBar(leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard")), title=ft.Text("Nuevo Curso"), bgcolor=THEME["primary"], color="white"),
+        ft.Container(content=create_card(ft.Column([tf, ft.ElevatedButton("Crear", on_click=save, bgcolor="green", color="white")])), padding=20, bgcolor=THEME["bg"], expand=True)
     ])
 
 def view_search(page: ft.Page):
     term = page.session.get("search_term")
-    res = db.search_alumnos(term) if term else []
-    col = ft.Column(scroll="auto", expand=True)
-    
-    if not res: 
-        col.controls.append(ft.Text("Sin resultados"))
-    else:
-        for r in res:
-            def on_clk(e, aid=r['id'], cid=r['curso_id'], cname=r['curso_nombre']):
-                page.session.set("alumno_id", aid)
-                page.session.set("curso_id", cid)
-                page.session.set("curso_nombre", cname)
-                page.go("/student_detail")
-            
-            col.controls.append(create_card(ft.ListTile(
-                leading=ft.Icon(ft.icons.PERSON, color=THEME["primary"]),
-                title=ft.Text(r['nombre'], weight="bold"),
-                subtitle=ft.Text(f"{r['curso_nombre']} - DNI: {r['dni']}"),
-                on_click=on_clk
-            )))
-    
-    return ft.View("/search", [
-        ft.AppBar(leading=ft.IconButton(icon=ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: page.go("/dashboard")), 
-                  title=ft.Text(f"Búsqueda: {term}"), bgcolor=THEME["primary"], color="white"),
-        ft.Container(content=col, padding=20, bgcolor=THEME["bg"], expand=True)
-    ])
+    col = ft.Column(scroll="auto")
+    for r in db.search_alumnos(term):
+        def go(aid, cid, cname): 
+             page.session.set("alumno_id", aid); page.session.set("curso_id", cid); page.session.set("curso_nombre", cname); page.go("/student_detail")
+        col.controls.append(create_card(ft.ListTile(title=ft.Text(r['nombre']), subtitle=ft.Text(f"{r['curso_nombre']} - {r['dni']}"), on_click=lambda e, aid=r['id'], cid=r['curso_id'], cn=r['curso_nombre']: go(aid, cid, cn)), padding=0))
+    return ft.View("/search", [ft.AppBar(leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard")), title=ft.Text("Búsqueda"), bgcolor=THEME["primary"], color="white"), ft.Container(content=col, padding=20, bgcolor=THEME["bg"], expand=True)])
 
-def view_admin(page: ft.Page):
-    return ft.View("/admin", [
-        ft.AppBar(leading=ft.IconButton(icon=ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: page.go("/dashboard")), 
-                  title=ft.Text("Admin"), bgcolor=THEME["primary"], color="white"),
+def view_student_detail(page: ft.Page):
+    aid = page.session.get("alumno_id")
+    s = db.fetch_one("SELECT * FROM Alumnos WHERE id=%s", (aid,))
+    stats = db.get_reporte_curso(s['curso_id'], "2000-01-01", "2100-12-31")
+    stat = next((x for x in stats if x['id'] == aid), None)
+    
+    def export(e):
+        if not pd: return show_snack(page, "Pandas no instalado", "red")
+        output = io.BytesIO()
+        writer = pd.ExcelWriter(output, engine='xlsxwriter')
+        pd.DataFrame([s]).to_excel(writer, sheet_name="Ficha", index=False)
+        pd.DataFrame([stat]).to_excel(writer, sheet_name="Stats", index=False)
+        hist = db.get_historial_alumno(aid)
+        pd.DataFrame(hist).to_excel(writer, sheet_name="Historial", index=False)
+        writer.close(); output.seek(0)
+        b64 = base64.b64encode(output.read()).decode()
+        page.launch_url(f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}", web_window_name="ficha.xlsx")
+
+    return ft.View("/student_detail", [
+        ft.AppBar(leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso")), title=ft.Text("Ficha"), bgcolor=THEME["primary"], color="white"),
         ft.Container(content=ft.Column([
-            create_card(ft.ListTile(leading=ft.Icon(ft.icons.CALENDAR_MONTH), title=ft.Text("Gestión de Ciclos"), 
-                      on_click=lambda _: show_snack(page, "Funcionalidad simplificada para demo", THEME["warning"]))),
-            create_card(ft.ListTile(leading=ft.Icon(ft.icons.PEOPLE), title=ft.Text("Gestión de Usuarios"), 
-                      on_click=lambda _: show_snack(page, "Funcionalidad simplificada para demo", THEME["warning"])))
+            create_card(ft.Column([
+                ft.Text(s['nombre'], size=24, weight="bold"),
+                ft.Text(f"Faltas: {stat['faltas']} - Aus: {stat['pct']}%"),
+                ft.ElevatedButton("Excel", on_click=export, bgcolor="green", color="white")
+            ])),
         ]), padding=20, bgcolor=THEME["bg"], expand=True)
     ])
 
-# ==============================================================================
+def view_admin(page: ft.Page):
+    col_u = ft.Column(); col_c = ft.Column()
+    
+    def load():
+        col_u.controls.clear(); col_c.controls.clear()
+        for u in db.fetch_all("SELECT * FROM Usuarios"):
+            col_u.controls.append(ft.ListTile(title=ft.Text(u['username']), trailing=ft.IconButton("delete", on_click=lambda e, uid=u['id']: (db.delete_user(uid), load())) if u['username']!=page.session.get("user")['username'] else None))
+        for c in db.get_ciclos():
+            act = c['activo'] == 1
+            btn = ft.Text("ACTIVO", color="green") if act else ft.ElevatedButton("Activar", on_click=lambda e, cid=c['id']: (db.activar_ciclo(cid), load()))
+            col_c.controls.append(ft.ListTile(title=ft.Text(c['nombre']), trailing=btn))
+        page.update()
+
+    u_in = ft.TextField(label="User"); p_in = ft.TextField(label="Pass"); r_in = ft.Dropdown(options=[ft.dropdown.Option("admin"), ft.dropdown.Option("preceptor")], value="preceptor")
+    c_in = ft.TextField(label="Ciclo")
+
+    def add_u(e): db.add_user(u_in.value, p_in.value, r_in.value); load()
+    def add_c(e): db.add_ciclo(c_in.value); load()
+
+    load()
+    return ft.View("/admin", [
+        ft.AppBar(leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard")), title=ft.Text("Admin"), bgcolor=THEME["primary"], color="white"),
+        ft.Container(content=ft.Column([
+            ft.Text("Usuarios", weight="bold"), ft.Row([u_in, p_in, r_in, ft.IconButton("add", on_click=add_u)]), col_u,
+            ft.Divider(),
+            ft.Text("Ciclos", weight="bold"), ft.Row([c_in, ft.IconButton("add", on_click=add_c)]), col_c
+        ], scroll="auto"), padding=20, bgcolor=THEME["bg"], expand=True)
+    ])
+
+def view_pedidos(page: ft.Page):
+    cid = page.session.get("curso_id")
+    dd = ft.Dropdown(label="Pedido", expand=True, on_change=lambda e: lc())
+    col = ft.Column(scroll="auto"); rm = {}
+    
+    def lr():
+        rs = db.fetch_all("SELECT * FROM Requisitos WHERE curso_id=?", (cid,))
+        rm.clear(); dd.options.clear()
+        for r in rs: rm[r['descripcion']]=r['id']; dd.options.append(ft.dropdown.Option(r['descripcion']))
+        if rs: dd.value=rs[0]['descripcion']
+        page.update(); lc()
+    
+    def lc():
+        col.controls.clear()
+        if not dd.value: return
+        rid = rm[dd.value]
+        done = {x['alumno_id'] for x in db.fetch_all("SELECT alumno_id FROM Requisitos_Cumplidos WHERE requisito_id=?", (rid,))}
+        for a in db.get_alumnos_curso(cid):
+            col.controls.append(create_card(ft.Checkbox(label=a['nombre'], value=(a['id'] in done), on_change=lambda e, aid=a['id'], rid=rid: db.toggle_requisito(rid, aid, e.control.value)), padding=5))
+        page.update()
+    
+    def add(e): page.go("/form_req")
+    def dele(e): 
+        if dd.value: db.delete_requisito(rm[dd.value]); lr()
+
+    lr()
+    return ft.View("/pedidos", [
+        ft.AppBar(leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso")), title=ft.Text("Pedidos"), bgcolor=THEME["primary"], color="white"),
+        ft.Container(content=ft.Column([ft.Row([dd, ft.IconButton("add", on_click=add), ft.IconButton("delete", icon_color="red", on_click=dele)]), col]), padding=20, bgcolor=THEME["bg"], expand=True)
+    ])
+
+def view_form_req(page: ft.Page):
+    tf = ft.TextField(label="Descripción")
+    def save(e): db.add_requisito(page.session.get("curso_id"), tf.value); page.go("/pedidos")
+    return ft.View("/form_req", [
+        ft.AppBar(leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/pedidos")), title=ft.Text("Nuevo Pedido"), bgcolor=THEME["primary"], color="white"),
+        ft.Container(content=create_card(ft.Column([tf, ft.ElevatedButton("Crear", on_click=save)])), padding=20, bgcolor=THEME["bg"], expand=True)
+    ])
+
+def view_reportes(page: ft.Page):
+    cid = page.session.get("curso_id")
+    d1 = ft.TextField(label="Desde", value=date.today().replace(day=1).isoformat())
+    d2 = ft.TextField(label="Hasta", value=date.today().isoformat())
+    col = ft.Column(scroll="auto", expand=True)
+
+    def gen(e):
+        data = db.get_reporte_curso(cid, d1.value, d2.value)
+        rows = []
+        for d in data:
+            c = "red" if d['faltas']>=25 else "black"
+            rows.append(ft.DataRow(cells=[
+                ft.DataCell(ft.Text(d['nombre'], color=c)), ft.DataCell(ft.Text(str(d['p']))), ft.DataCell(ft.Text(str(d['a']))),
+                ft.DataCell(ft.Text(str(d['faltas']), color=c, weight="bold")), ft.DataCell(ft.Text(f"{d['pct']}%", color=c))
+            ]))
+        col.controls = [ft.DataTable(columns=[ft.DataColumn(ft.Text("Alum")), ft.DataColumn(ft.Text("P"), numeric=True), ft.DataColumn(ft.Text("A"), numeric=True), ft.DataColumn(ft.Text("Faltas"), numeric=True), ft.DataColumn(ft.Text("%"), numeric=True)], rows=rows)]
+        page.update()
+
+    def exp(e):
+        if not pd: return show_snack(page, "No pandas", "red")
+        df = pd.DataFrame(db.get_reporte_curso(cid, d1.value, d2.value))
+        out = io.BytesIO(); df.to_excel(out, index=False, engine='xlsxwriter')
+        b64 = base64.b64encode(out.getvalue()).decode()
+        page.launch_url(f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}", web_window_name="rep.xlsx")
+
+    return ft.View("/reportes", [
+        ft.AppBar(leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso")), title=ft.Text("Reportes"), bgcolor=THEME["primary"], color="white"),
+        ft.Container(content=ft.Column([ft.Row([d1, d2, ft.ElevatedButton("Ver", on_click=gen)]), ft.ElevatedButton("Excel", on_click=exp, bgcolor="green", color="white"), col]), padding=20, bgcolor=THEME["bg"], expand=True)
+    ])
+
+# ======================================================================
 # CONTROLADOR PRINCIPAL (Router)
-# ==============================================================================
+# ======================================================================
 
 def main(page: ft.Page):
     page.title = "Asistencia UNSAM"
@@ -1049,8 +743,9 @@ def main(page: ft.Page):
     page.go("/")
 
 if __name__ == "__main__":
+    # Configuración de puerto para Nube vs Local
     port_env = os.environ.get("PORT")
     if port_env:
-        ft.app(target=main, view=None, port=int(port_env), host="0.0.0.0")
+        ft.app(target=main, port=int(port_env), host="0.0.0.0")
     else:
-        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
+        ft.app(target=main, port=8550)
