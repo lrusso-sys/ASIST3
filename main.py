@@ -607,7 +607,7 @@ def main(page: ft.Page):
         return ft.View("/", [
             ft.Container(
                 content=ft.Column([
-                    ft.Icon(ft.icons.SCHOOL, size=80, color=PRIMARY),
+                    ft.Icon(ft.icons.SCHOOL_OUTLINE, size=80, color=PRIMARY),
                     ft.Text("Sistema de Asistencia", size=28, weight="bold", color=SECONDARY),
                     ft.Text("UNSAM", size=18, color="grey"),
                     ft.Divider(height=30, color="transparent"),
@@ -667,7 +667,7 @@ def main(page: ft.Page):
                 cursos_col.controls.append(create_card(
                     content=ft.Row([
                         ft.Row([
-                            ft.Container(content=ft.Icon(ft.icons.CLASS_, color="white"), bgcolor=PRIMARY, border_radius=10, padding=10), 
+                            ft.Container(content=ft.Icon(ft.icons.CLASS, color="white"), bgcolor=PRIMARY, border_radius=10, padding=10), 
                             ft.Text(c['nombre'], weight="bold", size=18, color=SECONDARY)
                         ]),
                         action_row
