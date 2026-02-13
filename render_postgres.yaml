@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: asistencia-unsam
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    # PostgreSQL se configura automáticamente via DATABASE_URL
+
+databases:
+  - name: asistencia-db
+    databaseName: asistencia_db
+    user: asistencia_user
+    plan: free
