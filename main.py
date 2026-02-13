@@ -36,8 +36,6 @@ DB_CONFIG = {
 def get_db_connection():
     """Establece conexión con PostgreSQL"""
     conn = psycopg2.connect(**DB_CONFIG)
-    # Permite acceder a las columnas como diccionarios
-    psycopg2.extras.register_hstore(conn)
     return conn
 
 def hash_password(password):
@@ -116,9 +114,6 @@ def init_db():
         )
     """)
 
-    # En PostgreSQL no necesitamos migración de columnas como en SQLite
-    # Las columnas se crean con la tabla si no existen
-
     # Datos por defecto
     cursor.execute("SELECT COUNT(*) FROM Usuarios")
     if cursor.fetchone()[0] == 0:
@@ -135,7 +130,6 @@ def init_db():
             (anio, True)
         )
         cid = cursor.fetchone()[0]
-        # Actualizar cursos existentes sin ciclo (si los hubiera)
         cursor.execute(
             "UPDATE Cursos SET ciclo_id = %s WHERE ciclo_id IS NULL", 
             (cid,)
@@ -298,7 +292,6 @@ def search_students(term):
         WHERE (a.nombre ILIKE %s OR a.dni ILIKE %s) AND ci.activo = TRUE
         ORDER BY a.nombre
     """
-    # Nota: ILIKE es case-insensitive en PostgreSQL
     cursor.execute(query, (term, term))
     rows = cursor.fetchall()
     cursor.close()
@@ -321,7 +314,6 @@ def get_asistencia_diaria(curso_id, fecha):
 def register_asistencia(aid, cid, fecha, status):
     conn = get_db_connection()
     cursor = conn.cursor()
-    # UPSERT en PostgreSQL usando ON CONFLICT
     cursor.execute("""
         INSERT INTO Asistencia (alumno_id, fecha, status) 
         VALUES (%s, %s, %s)
@@ -459,9 +451,7 @@ def add_ciclo(nombre):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        # Desactivar todos los ciclos
         cursor.execute("UPDATE Ciclos SET activo = FALSE") 
-        # Insertar nuevo ciclo activo
         cursor.execute(
             "INSERT INTO Ciclos (nombre, activo) VALUES (%s, TRUE)", 
             (nombre,)
@@ -558,7 +548,6 @@ def main(page: ft.Page):
     page.theme_mode = "light"
     page.padding = 0
     
-    # Colores Hex
     PRIMARY = "#3F51B5"
     SECONDARY = "#1A237E"
     BG_COLOR = "#F0F0F0"
@@ -578,7 +567,6 @@ def main(page: ft.Page):
         "st_edit": None
     }
 
-    # Helper de navegación
     def go(route):
         page.route = route
         page.update()
@@ -598,8 +586,6 @@ def main(page: ft.Page):
             margin=ft.margin.only(bottom=10), 
             on_click=on_click
         )
-
-    # --- VISTAS ---
 
     def login_view():
         user = ft.TextField(label="Usuario", width=300, bgcolor="white", border_radius=8, border_color=PRIMARY)
@@ -1457,7 +1443,6 @@ def main(page: ft.Page):
             )
         ])
 
-    # --- ROUTER ---
     def router(route):
         page.views.clear()
         views = {
@@ -1481,9 +1466,9 @@ def main(page: ft.Page):
             page.route = "/"
             
         if page.route in views: 
-            page.views.append(views[page.route](page))
+            page.views.append(views[page.route]())
         else: 
-            page.views.append(login_view(page))
+            page.views.append(login_view())
             
         page.update()
 
@@ -1498,10 +1483,9 @@ def main(page: ft.Page):
 if __name__ == "__main__":
     port_env = os.environ.get("PORT")
     if port_env:
-        # CORREGIDO: Usar ft.run() en lugar de ft.app() (deprecado)
-        # CORREGIDO: view=None para servidor web (no WEB_BROWSER)
-        # CORREGIDO: Eliminar web_renderer="html" (no válido)
-        ft.run(target=main, view=None, port=int(port_env), host="0.0.0.0")
+        # CORREGIDO: Usar ft.app() con view=ft.AppView.WEB_BROWSER para servidores
+        # o view=ft.AppView.FLET_APP para modo web sin ventana
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
     else:
         # Modo desarrollo local
-        ft.run(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
