@@ -571,7 +571,6 @@ def main(page: ft.Page):
         "st_edit": None
     }
 
-    # NAVEGACIÓN ACTUALIZADA - Usar push_route en lugar de go
     def navigate(route):
         page.route = route
         page.update()
@@ -607,7 +606,7 @@ def main(page: ft.Page):
         return ft.View("/", [
             ft.Container(
                 content=ft.Column([
-                    ft.Icon(ft.icons.SCHOOL_OUTLINE, size=80, color=PRIMARY),
+                    ft.Icon(ft.icons.EDUCATION, size=80, color=PRIMARY),  # Cambiado de SCHOOL a EDUCATION
                     ft.Text("Sistema de Asistencia", size=28, weight="bold", color=SECONDARY),
                     ft.Text("UNSAM", size=18, color="grey"),
                     ft.Divider(height=30, color="transparent"),
@@ -667,7 +666,7 @@ def main(page: ft.Page):
                 cursos_col.controls.append(create_card(
                     content=ft.Row([
                         ft.Row([
-                            ft.Container(content=ft.Icon(ft.icons.CLASS, color="white"), bgcolor=PRIMARY, border_radius=10, padding=10), 
+                            ft.Container(content=ft.Icon(ft.icons.CLASS_, color="white"), bgcolor=PRIMARY, border_radius=10, padding=10), 
                             ft.Text(c['nombre'], weight="bold", size=18, color=SECONDARY)
                         ]),
                         action_row
@@ -1158,7 +1157,7 @@ def main(page: ft.Page):
             page.update()
             
         def add(e): 
-            page.go("/form_req")
+            navigate("/form_req")
             
         def dele(e): 
             if dd.value: 
@@ -1448,7 +1447,6 @@ def main(page: ft.Page):
             )
         ])
 
-    # ROUTER ACTUALIZADO
     def route_change(e):
         page.views.clear()
         routes = {
@@ -1468,11 +1466,9 @@ def main(page: ft.Page):
             "/users": users_view
         }
         
-        # Verificar autenticación
         if state["role"] is None and page.route != "/": 
             page.route = "/"
             
-        # Obtener la vista correspondiente
         view_func = routes.get(page.route, login_view)
         page.views.append(view_func())
         page.update()
@@ -1486,7 +1482,6 @@ def main(page: ft.Page):
     page.on_route_change = route_change
     page.on_view_pop = view_pop
     
-    # Inicializar en la ruta raíz
     page.route = "/"
     route_change(None)
 
