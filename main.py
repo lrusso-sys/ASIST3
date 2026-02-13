@@ -29,17 +29,13 @@ def get_db_connection():
     Establece conexión con PostgreSQL.
     En Render, usa la variable de entorno DATABASE_URL si está disponible.
     """
-    # Intentar usar DATABASE_URL (formato de Render y otros servicios cloud)
     database_url = os.environ.get('DATABASE_URL')
     
     if database_url:
-        # Render proporciona DATABASE_URL en formato postgres://user:pass@host:port/dbname
-        # psycopg2 necesita postgresql:// en lugar de postgres://
         if database_url.startswith('postgres://'):
             database_url = database_url.replace('postgres://', 'postgresql://', 1)
         conn = psycopg2.connect(database_url)
     else:
-        # Configuración manual para desarrollo local
         DB_CONFIG = {
             'host': os.environ.get('DB_HOST', 'localhost'),
             'database': os.environ.get('DB_NAME', 'asistencia_db'),
@@ -59,7 +55,6 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Tablas - Adaptadas para PostgreSQL (SERIAL, BOOLEAN, etc.)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS Usuarios (
             id SERIAL PRIMARY KEY, 
@@ -124,7 +119,6 @@ def init_db():
         )
     """)
 
-    # Datos por defecto
     cursor.execute("SELECT COUNT(*) FROM Usuarios")
     if cursor.fetchone()[0] == 0:
         cursor.execute(
@@ -150,7 +144,7 @@ def init_db():
     conn.close()
 
 # ==============================================================================
-# FUNCIONES CRUD (Adaptadas para PostgreSQL)
+# FUNCIONES CRUD
 # ==============================================================================
 
 def authenticate_user(username, password):
@@ -550,7 +544,7 @@ def get_student_req_status(aid, cid):
     return res
 
 # ==============================================================================
-# 2. INTERFAZ GRÁFICA (Flet - Navegación Moderna)
+# 2. INTERFAZ GRÁFICA (Flet)
 # ==============================================================================
 
 def main(page: ft.Page):
@@ -577,7 +571,8 @@ def main(page: ft.Page):
         "st_edit": None
     }
 
-    def go(route):
+    # NAVEGACIÓN ACTUALIZADA - Usar push_route en lugar de go
+    def navigate(route):
         page.route = route
         page.update()
 
@@ -605,7 +600,7 @@ def main(page: ft.Page):
             ok, role = authenticate_user(user.value, pwd.value)
             if ok:
                 state["role"], state["username"] = role, user.value
-                go("/dashboard")
+                navigate("/dashboard")
             else:
                 show_snack("Datos incorrectos", DANGER)
         
@@ -631,7 +626,7 @@ def main(page: ft.Page):
                     ),
                     ft.Container(height=20),
                     ft.Text("Admin Default: admin / admin", size=12, color="grey")
-                ], horizontal_alignment="center"),
+                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                 alignment=ft.alignment.center, 
                 expand=True, 
                 bgcolor=BG_COLOR
@@ -646,10 +641,10 @@ def main(page: ft.Page):
         def do_search(e): 
             if search.value: 
                 state["search"] = search.value
-                go("/search")
+                navigate("/search")
         search.on_submit = do_search
         
-        cursos_col = ft.Column(scroll="auto", expand=True)
+        cursos_col = ft.Column(scroll=ft.ScrollMode.AUTO, expand=True)
         
         def load():
             cursos_col.controls.clear()
@@ -676,23 +671,23 @@ def main(page: ft.Page):
                             ft.Text(c['nombre'], weight="bold", size=18, color=SECONDARY)
                         ]),
                         action_row
-                    ], alignment="spaceBetween")
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
                 ))
             page.update()
         
         def go_curso(cid, cn): 
             state["curso_id"] = cid
             state["curso_nombre"] = cn
-            go("/curso")
+            navigate("/curso")
             
         def add_c(e): 
             if ciclo: 
-                go("/form_curso")
+                navigate("/form_curso")
             else: 
                 show_snack("Falta Ciclo Activo", DANGER)
 
         load()
-        admin_btn = ft.IconButton(ft.icons.SETTINGS, icon_color="white", on_click=lambda _: go("/admin")) if state["role"] == 'admin' else ft.Container()
+        admin_btn = ft.IconButton(ft.icons.SETTINGS, icon_color="white", on_click=lambda _: navigate("/admin")) if state["role"] == 'admin' else ft.Container()
         
         return ft.View("/dashboard", [
             ft.AppBar(
@@ -700,7 +695,7 @@ def main(page: ft.Page):
                 bgcolor=PRIMARY, 
                 color="white", 
                 center_title=True, 
-                actions=[admin_btn, ft.IconButton(ft.icons.LOGOUT, icon_color="white", on_click=lambda _: go("/"))]
+                actions=[admin_btn, ft.IconButton(ft.icons.LOGOUT, icon_color="white", on_click=lambda _: navigate("/"))]
             ),
             ft.Container(
                 content=ft.Column([
@@ -708,13 +703,13 @@ def main(page: ft.Page):
                         content=ft.Row([
                             ft.Text(f"Ciclo: {c_nombre}", color=PRIMARY, weight="bold"), 
                             ft.Container(content=search, width=300)
-                        ], alignment="spaceBetween"), 
+                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), 
                         padding=ft.padding.only(bottom=20)
                     ),
                     ft.Row([
                         ft.Text("Mis Cursos", size=24, weight="bold", color=SECONDARY), 
                         ft.ElevatedButton("Nuevo Curso", icon=ft.icons.ADD, bgcolor=SUCCESS, color="white", on_click=add_c)
-                    ], alignment="spaceBetween"),
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                     ft.Container(height=10), 
                     cursos_col
                 ]), 
@@ -725,7 +720,7 @@ def main(page: ft.Page):
         ])
 
     def curso_view():
-        col = ft.Column(scroll="auto", expand=True)
+        col = ft.Column(scroll=ft.ScrollMode.AUTO, expand=True)
         
         def load():
             col.controls.clear()
@@ -736,9 +731,9 @@ def main(page: ft.Page):
                 def go_det(aid, cid): 
                     state["st_view"] = aid
                     state["curso_id"] = cid
-                    go("/student_detail")
+                    navigate("/student_detail")
                 def edit_clk(aid): 
-                    return lambda e: (state.update({"st_edit": aid}), go("/form_student"))
+                    return lambda e: (state.update({"st_edit": aid}), navigate("/form_student"))
                 def del_clk(aid): 
                     return lambda e: (delete_alumno(aid), load())
                     
@@ -764,7 +759,7 @@ def main(page: ft.Page):
         
         return ft.View("/curso", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: go("/dashboard")), 
+                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/dashboard")), 
                 title=ft.Text(state["curso_nombre"]), 
                 bgcolor=PRIMARY, 
                 color="white", 
@@ -774,16 +769,16 @@ def main(page: ft.Page):
                 content=ft.Column([
                     ft.Container(
                         content=ft.Row([
-                            ft.ElevatedButton("Asistencia", icon=ft.icons.CHECK_CIRCLE, height=50, on_click=lambda _: go("/asistencia"), bgcolor="#3949AB", color="white", expand=True),
-                            ft.ElevatedButton("Pedidos", icon=ft.icons.ASSIGNMENT, height=50, on_click=lambda _: go("/pedidos"), bgcolor="#F57C00", color="white", expand=True),
-                            ft.ElevatedButton("Reportes", icon=ft.icons.BAR_CHART, height=50, on_click=lambda _: go("/reportes"), bgcolor="#00897B", color="white", expand=True)
+                            ft.ElevatedButton("Asistencia", icon=ft.icons.CHECK_CIRCLE, height=50, on_click=lambda _: navigate("/asistencia"), bgcolor="#3949AB", color="white", expand=True),
+                            ft.ElevatedButton("Pedidos", icon=ft.icons.ASSIGNMENT, height=50, on_click=lambda _: navigate("/pedidos"), bgcolor="#F57C00", color="white", expand=True),
+                            ft.ElevatedButton("Reportes", icon=ft.icons.BAR_CHART, height=50, on_click=lambda _: navigate("/reportes"), bgcolor="#00897B", color="white", expand=True)
                         ], spacing=10), 
                         padding=ft.padding.only(bottom=20)
                     ),
                     ft.Row([
                         ft.Text("Alumnos", size=22, weight="bold", color=SECONDARY), 
-                        ft.IconButton(ft.icons.PERSON_ADD, icon_color="white", bgcolor=SUCCESS, on_click=lambda _: (state.update({"st_edit": None}), go("/form_student")))
-                    ], alignment="spaceBetween"),
+                        ft.IconButton(ft.icons.PERSON_ADD, icon_color="white", bgcolor=SUCCESS, on_click=lambda _: (state.update({"st_edit": None}), navigate("/form_student")))
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                     ft.Container(height=10), 
                     col
                 ]), 
@@ -795,7 +790,7 @@ def main(page: ft.Page):
 
     def asistencia_view():
         dp = ft.TextField(label="Fecha (AAAA-MM-DD)", value=date.today().isoformat(), bgcolor="white", border_radius=10)
-        col = ft.Column(scroll="auto", expand=True)
+        col = ft.Column(scroll=ft.ScrollMode.AUTO, expand=True)
         vals = {}
         
         def load(e=None):
@@ -824,7 +819,7 @@ def main(page: ft.Page):
                     content=ft.Row([
                         ft.Text(a['nombre'], weight="bold", size=16, expand=True), 
                         dd
-                    ], alignment="spaceBetween"), 
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN), 
                     padding=10
                 ))
             page.update()
@@ -842,20 +837,20 @@ def main(page: ft.Page):
             for aid, dd in vals.items(): 
                 register_asistencia(aid, state["curso_id"], dp.value, dd.value)
             show_snack("Guardado")
-            go("/curso")
+            navigate("/curso")
             
         load()
         
         return ft.View("/asistencia", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: go("/curso")), 
+                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/curso")), 
                 title=ft.Text("Tomar Asistencia"), 
                 bgcolor=PRIMARY, 
                 color="white"
             ),
             ft.Container(
                 content=ft.Column([
-                    create_card(ft.Row([dp, ft.IconButton(ft.icons.REFRESH, on_click=load, icon_color=PRIMARY)], alignment="center")), 
+                    create_card(ft.Row([dp, ft.IconButton(ft.icons.REFRESH, on_click=load, icon_color=PRIMARY)], alignment=ft.MainAxisAlignment.CENTER)), 
                     ft.ElevatedButton("GUARDAR CAMBIOS", on_click=save, bgcolor=SUCCESS, color="white", height=50, width=float("inf")), 
                     ft.Container(height=10), 
                     col
@@ -869,7 +864,7 @@ def main(page: ft.Page):
     def reportes_view():
         d1 = ft.TextField(label="Desde", value=date.today().replace(day=1).isoformat(), width=130, bgcolor="white", border_radius=8)
         d2 = ft.TextField(label="Hasta", value=date.today().isoformat(), width=130, bgcolor="white", border_radius=8)
-        table_cont = ft.Column(scroll="auto", expand=True)
+        table_cont = ft.Column(scroll=ft.ScrollMode.AUTO, expand=True)
         
         def gen(e):
             data = get_report_data(state["curso_id"], d1.value, d2.value)
@@ -910,7 +905,7 @@ def main(page: ft.Page):
                 heading_row_color="#E3F2FD", 
                 heading_row_height=40
             )
-            table_cont.controls = [create_card(ft.Row([dt], scroll="always"), padding=0)]
+            table_cont.controls = [create_card(ft.Row([dt], scroll=ft.ScrollMode.ALWAYS), padding=0)]
             page.update()
         
         def export(e):
@@ -937,14 +932,14 @@ def main(page: ft.Page):
 
         return ft.View("/reportes", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: go("/curso")), 
+                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/curso")), 
                 title=ft.Text("Reportes"), 
                 bgcolor=PRIMARY, 
                 color="white"
             ),
             ft.Container(
                 content=ft.Column([
-                    create_card(ft.Row([d1, d2, ft.ElevatedButton("VER TABLA", on_click=gen, bgcolor=PRIMARY, color="white", height=45)], alignment="center")), 
+                    create_card(ft.Row([d1, d2, ft.ElevatedButton("VER TABLA", on_click=gen, bgcolor=PRIMARY, color="white", height=45)], alignment=ft.MainAxisAlignment.CENTER)), 
                     ft.ElevatedButton("DESCARGAR EXCEL", icon=ft.icons.DOWNLOAD, on_click=export, bgcolor="green", color="white", width=float("inf"), height=45), 
                     ft.Container(height=10), 
                     table_cont
@@ -958,7 +953,7 @@ def main(page: ft.Page):
     def search_view():
         term = state["search"]
         res = search_students(term)
-        col = ft.Column(scroll="auto")
+        col = ft.Column(scroll=ft.ScrollMode.AUTO)
         
         if not res: 
             col.controls.append(ft.Text("Sin resultados", color="grey", size=16))
@@ -967,7 +962,7 @@ def main(page: ft.Page):
                 def go_det(s): 
                     state["st_view"] = s['id']
                     state["curso_id"] = s['curso_id']
-                    go("/student_detail")
+                    navigate("/student_detail")
                     
                 col.controls.append(create_card(
                     content=ft.ListTile(
@@ -981,7 +976,7 @@ def main(page: ft.Page):
                 
         return ft.View("/search", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: go("/dashboard")), 
+                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/dashboard")), 
                 title=ft.Text(f"Búsqueda: {term}"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -1045,7 +1040,7 @@ def main(page: ft.Page):
                 content=ft.Column([
                     ft.Text(v, size=20, weight="bold", color=c), 
                     ft.Text(l, size=12, color="grey")
-                ], horizontal_alignment="center"), 
+                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER), 
                 padding=10, 
                 bgcolor="white", 
                 border_radius=5, 
@@ -1112,13 +1107,13 @@ def main(page: ft.Page):
         
         return ft.View("/student_detail", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: go("/search")), 
+                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/search")), 
                 title=ft.Text("Ficha"), 
                 bgcolor=PRIMARY, 
                 color="white"
             ), 
             ft.Container(
-                content=ft.Column([card], scroll="auto"), 
+                content=ft.Column([card], scroll=ft.ScrollMode.AUTO), 
                 padding=20, 
                 bgcolor=BG_COLOR, 
                 expand=True
@@ -1127,7 +1122,7 @@ def main(page: ft.Page):
 
     def pedidos_view():
         dd = ft.Dropdown(label="Pedido", expand=True, bgcolor="white", on_change=lambda e: lc(), border_radius=8)
-        col = ft.Column(scroll="auto", expand=True)
+        col = ft.Column(scroll=ft.ScrollMode.AUTO, expand=True)
         rm = {}
         
         def lr():
@@ -1175,7 +1170,7 @@ def main(page: ft.Page):
         
         return ft.View("/pedidos", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: go("/curso")), 
+                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/curso")), 
                 title=ft.Text("Documentación"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -1219,11 +1214,11 @@ def main(page: ft.Page):
                     update_alumno(state["st_edit"], nm.value, dni.value, obs.value, tn.value, tt.value)
                 else: 
                     add_alumno(state["curso_id"], nm.value, dni.value, obs.value, tn.value, tt.value)
-                go("/curso")
+                navigate("/curso")
                 
         return ft.View("/form_student", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: go("/curso")), 
+                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/curso")), 
                 title=ft.Text("Ficha del Alumno"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -1251,13 +1246,13 @@ def main(page: ft.Page):
         
         def save(e): 
             if add_curso(tf.value): 
-                go("/dashboard")
+                navigate("/dashboard")
             else: 
                 show_snack("Error", DANGER)
                 
         return ft.View("/form_curso", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: go("/dashboard")), 
+                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/dashboard")), 
                 title=ft.Text("Nuevo Curso"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -1280,11 +1275,11 @@ def main(page: ft.Page):
         def save(e):
             if tf.value: 
                 add_requisito(state["curso_id"], tf.value)
-                go("/pedidos")
+                navigate("/pedidos")
                 
         return ft.View("/form_req", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: go("/pedidos")), 
+                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/pedidos")), 
                 title=ft.Text("Nuevo Requisito"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -1310,7 +1305,7 @@ def main(page: ft.Page):
             
         return ft.View("/admin", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: go("/dashboard")), 
+                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/dashboard")), 
                 title=ft.Text("Admin"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -1320,12 +1315,12 @@ def main(page: ft.Page):
                     create_card(ft.ListTile(
                         leading=ft.Icon(ft.icons.CALENDAR_MONTH, color=PRIMARY), 
                         title=ft.Text("Ciclos Lectivos"), 
-                        on_click=lambda _: go("/ciclos")
+                        on_click=lambda _: navigate("/ciclos")
                     )), 
                     create_card(ft.ListTile(
                         leading=ft.Icon(ft.icons.PEOPLE, color=PRIMARY), 
                         title=ft.Text("Usuarios"), 
-                        on_click=lambda _: go("/users")
+                        on_click=lambda _: navigate("/users")
                     ))
                 ]), 
                 padding=20, 
@@ -1336,7 +1331,7 @@ def main(page: ft.Page):
 
     def ciclos_view():
         tf = ft.TextField(label="Año", expand=True, bgcolor="white", border_radius=8)
-        col = ft.Column(scroll="auto", expand=True)
+        col = ft.Column(scroll=ft.ScrollMode.AUTO, expand=True)
         
         def ld():
             col.controls.clear()
@@ -1369,7 +1364,7 @@ def main(page: ft.Page):
         
         return ft.View("/ciclos", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: go("/admin")), 
+                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/admin")), 
                 title=ft.Text("Ciclos"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -1431,7 +1426,7 @@ def main(page: ft.Page):
         
         return ft.View("/users", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: go("/admin")), 
+                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/admin")), 
                 title=ft.Text("Usuarios"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -1453,9 +1448,10 @@ def main(page: ft.Page):
             )
         ])
 
-    def router(route):
+    # ROUTER ACTUALIZADO
+    def route_change(e):
         page.views.clear()
-        views = {
+        routes = {
             "/": login_view, 
             "/dashboard": dashboard_view, 
             "/curso": curso_view, 
@@ -1472,22 +1468,30 @@ def main(page: ft.Page):
             "/users": users_view
         }
         
+        # Verificar autenticación
         if state["role"] is None and page.route != "/": 
             page.route = "/"
             
-        if page.route in views: 
-            page.views.append(views[page.route]())
-        else: 
-            page.views.append(login_view())
-            
+        # Obtener la vista correspondiente
+        view_func = routes.get(page.route, login_view)
+        page.views.append(view_func())
         page.update()
 
-    page.on_route_change = router
-    page.on_view_pop = lambda view: page.go(page.views[-2].route)
-    page.go("/")
+    def view_pop(e):
+        page.views.pop()
+        top_view = page.views[-1]
+        page.route = top_view.route
+        page.update()
+
+    page.on_route_change = route_change
+    page.on_view_pop = view_pop
+    
+    # Inicializar en la ruta raíz
+    page.route = "/"
+    route_change(None)
 
 # ==============================================================================
-# PUNTO DE ENTRADA - CORREGIDO PARA RENDER
+# PUNTO DE ENTRADA
 # ==============================================================================
 
 if __name__ == "__main__":
