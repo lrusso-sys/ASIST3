@@ -129,10 +129,10 @@ def main(page: ft.Page):
     page.bgcolor = BG_COLOR
     
     # Fuentes
-    page.fonts = {
-        "Roboto": "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf",
-        "RobotoBold": "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Bold.ttf"
-    }
+    #page.fonts = {
+    #    "Roboto": "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf",
+    #    "RobotoBold": "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Bold.ttf"
+    #}
 
     init_db()
 
