@@ -544,7 +544,7 @@ def get_student_req_status(aid, cid):
     return res
 
 # ==============================================================================
-# 2. INTERFAZ GRÁFICA (Flet) - ICONOS CORREGIDOS
+# 2. INTERFAZ GRÁFICA (Flet) - SIN ICONOS PROBLEMATICOS
 # ==============================================================================
 
 def main(page: ft.Page):
@@ -606,7 +606,11 @@ def main(page: ft.Page):
         return ft.View("/", [
             ft.Container(
                 content=ft.Column([
-                    ft.Icon(ft.icons.HOME, size=80, color=PRIMARY),  # HOME es muy seguro
+                    # REEMPLAZADO: Icono por un contenedor con texto estilizado
+                    ft.Container(
+                        content=ft.Text("🏫", size=80),  # Emoji como reemplazo
+                        alignment=ft.alignment.center
+                    ),
                     ft.Text("Sistema de Asistencia", size=28, weight="bold", color=SECONDARY),
                     ft.Text("UNSAM", size=18, color="grey"),
                     ft.Divider(height=30, color="transparent"),
@@ -658,15 +662,16 @@ def main(page: ft.Page):
                     return lambda e: (delete_curso(cid), load())
 
                 action_row = ft.Row([
-                    ft.IconButton(ft.icons.ARROW_FORWARD, icon_color=PRIMARY, on_click=create_click(c['id'], c['nombre'])),
+                    ft.ElevatedButton("→", on_click=create_click(c['id'], c['nombre']), bgcolor=PRIMARY, color="white"),  # Flecha como texto
                 ])
                 if state["role"] == 'admin':
-                    action_row.controls.append(ft.IconButton(ft.icons.DELETE, icon_color=DANGER, on_click=create_del(c['id'])))
+                    action_row.controls.append(ft.ElevatedButton("✕", on_click=create_del(c['id']), bgcolor=DANGER, color="white"))  # X como texto
 
                 cursos_col.controls.append(create_card(
                     content=ft.Row([
                         ft.Row([
-                            ft.Container(content=ft.Icon(ft.icons.FOLDER, color="white"), bgcolor=PRIMARY, border_radius=10, padding=10),  # FOLDER es seguro
+                            # REEMPLAZADO: Icono por emoji
+                            ft.Container(content=ft.Text("📁", size=20), bgcolor=PRIMARY, border_radius=10, padding=10),  
                             ft.Text(c['nombre'], weight="bold", size=18, color=SECONDARY)
                         ]),
                         action_row
@@ -686,7 +691,8 @@ def main(page: ft.Page):
                 show_snack("Falta Ciclo Activo", DANGER)
 
         load()
-        admin_btn = ft.IconButton(ft.icons.SETTINGS, icon_color="white", on_click=lambda _: navigate("/admin")) if state["role"] == 'admin' else ft.Container()
+        # REEMPLAZADO: Iconos por texto en botones
+        admin_btn = ft.ElevatedButton("⚙", on_click=lambda _: navigate("/admin"), bgcolor=PRIMARY, color="white") if state["role"] == 'admin' else ft.Container()
         
         return ft.View("/dashboard", [
             ft.AppBar(
@@ -694,7 +700,7 @@ def main(page: ft.Page):
                 bgcolor=PRIMARY, 
                 color="white", 
                 center_title=True, 
-                actions=[admin_btn, ft.IconButton(ft.icons.LOGOUT, icon_color="white", on_click=lambda _: navigate("/"))]
+                actions=[admin_btn, ft.ElevatedButton("⏻", on_click=lambda _: navigate("/"), bgcolor=PRIMARY, color="white")]  # Texto en lugar de icono
             ),
             ft.Container(
                 content=ft.Column([
@@ -707,7 +713,7 @@ def main(page: ft.Page):
                     ),
                     ft.Row([
                         ft.Text("Mis Cursos", size=24, weight="bold", color=SECONDARY), 
-                        ft.ElevatedButton("Nuevo Curso", icon=ft.icons.ADD, bgcolor=SUCCESS, color="white", on_click=add_c)
+                        ft.ElevatedButton("+ Nuevo", bgcolor=SUCCESS, color="white", on_click=add_c)  # Texto en lugar de icono
                     ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                     ft.Container(height=10), 
                     cursos_col
@@ -743,10 +749,11 @@ def main(page: ft.Page):
                         subtitle=ft.Text(f"DNI: {a.get('dni','-')}"), 
                         on_click=lambda e, s=a: go_det(s['id'], state["curso_id"]), 
                         trailing=ft.PopupMenuButton(
-                            icon=ft.icons.MORE_VERT, 
+                            # REEMPLAZADO: Icono por texto
+                            content=ft.Text("⋮", size=20),  
                             items=[
-                                ft.PopupMenuItem(text="Editar", icon=ft.icons.EDIT, on_click=edit_clk(a['id'])), 
-                                ft.PopupMenuItem(text="Borrar", icon=ft.icons.DELETE, on_click=del_clk(a['id']))
+                                ft.PopupMenuItem(text="Editar", on_click=edit_clk(a['id'])), 
+                                ft.PopupMenuItem(text="Borrar", on_click=del_clk(a['id']))
                             ]
                         )
                     ), 
@@ -758,7 +765,7 @@ def main(page: ft.Page):
         
         return ft.View("/curso", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/dashboard")), 
+                leading=ft.ElevatedButton("←", on_click=lambda _: navigate("/dashboard"), bgcolor=PRIMARY, color="white"),  # Flecha texto
                 title=ft.Text(state["curso_nombre"]), 
                 bgcolor=PRIMARY, 
                 color="white", 
@@ -768,15 +775,15 @@ def main(page: ft.Page):
                 content=ft.Column([
                     ft.Container(
                         content=ft.Row([
-                            ft.ElevatedButton("Asistencia", icon=ft.icons.CHECK, height=50, on_click=lambda _: navigate("/asistencia"), bgcolor="#3949AB", color="white", expand=True),  # CHECK es seguro
-                            ft.ElevatedButton("Pedidos", icon=ft.icons.DESCRIPTION, height=50, on_click=lambda _: navigate("/pedidos"), bgcolor="#F57C00", color="white", expand=True),  # DESCRIPTION es seguro
-                            ft.ElevatedButton("Reportes", icon=ft.icons.ANALYTICS, height=50, on_click=lambda _: navigate("/reportes"), bgcolor="#00897B", color="white", expand=True)  # ANALYTICS es seguro
+                            ft.ElevatedButton("✓ Asistencia", height=50, on_click=lambda _: navigate("/asistencia"), bgcolor="#3949AB", color="white", expand=True),
+                            ft.ElevatedButton("☰ Pedidos", height=50, on_click=lambda _: navigate("/pedidos"), bgcolor="#F57C00", color="white", expand=True),
+                            ft.ElevatedButton("📊 Reportes", height=50, on_click=lambda _: navigate("/reportes"), bgcolor="#00897B", color="white", expand=True)
                         ], spacing=10), 
                         padding=ft.padding.only(bottom=20)
                     ),
                     ft.Row([
                         ft.Text("Alumnos", size=22, weight="bold", color=SECONDARY), 
-                        ft.IconButton(ft.icons.ADD, icon_color="white", bgcolor=SUCCESS, on_click=lambda _: (state.update({"st_edit": None}), navigate("/form_student")))  # ADD es seguro
+                        ft.ElevatedButton("+", bgcolor=SUCCESS, color="white", on_click=lambda _: (state.update({"st_edit": None}), navigate("/form_student")))
                     ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                     ft.Container(height=10), 
                     col
@@ -842,14 +849,14 @@ def main(page: ft.Page):
         
         return ft.View("/asistencia", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/curso")), 
+                leading=ft.ElevatedButton("←", on_click=lambda _: navigate("/curso"), bgcolor=PRIMARY, color="white"), 
                 title=ft.Text("Tomar Asistencia"), 
                 bgcolor=PRIMARY, 
                 color="white"
             ),
             ft.Container(
                 content=ft.Column([
-                    create_card(ft.Row([dp, ft.IconButton(ft.icons.REFRESH, on_click=load, icon_color=PRIMARY)], alignment=ft.MainAxisAlignment.CENTER)), 
+                    create_card(ft.Row([dp, ft.ElevatedButton("↻", on_click=load, bgcolor="white", color=PRIMARY)], alignment=ft.MainAxisAlignment.CENTER)), 
                     ft.ElevatedButton("GUARDAR CAMBIOS", on_click=save, bgcolor=SUCCESS, color="white", height=50, width=float("inf")), 
                     ft.Container(height=10), 
                     col
@@ -931,7 +938,7 @@ def main(page: ft.Page):
 
         return ft.View("/reportes", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/curso")), 
+                leading=ft.ElevatedButton("←", on_click=lambda _: navigate("/curso"), bgcolor=PRIMARY, color="white"), 
                 title=ft.Text("Reportes"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -939,7 +946,7 @@ def main(page: ft.Page):
             ft.Container(
                 content=ft.Column([
                     create_card(ft.Row([d1, d2, ft.ElevatedButton("VER TABLA", on_click=gen, bgcolor=PRIMARY, color="white", height=45)], alignment=ft.MainAxisAlignment.CENTER)), 
-                    ft.ElevatedButton("DESCARGAR EXCEL", icon=ft.icons.DOWNLOAD, on_click=export, bgcolor="green", color="white", width=float("inf"), height=45), 
+                    ft.ElevatedButton("↓ EXCEL", on_click=export, bgcolor="green", color="white", width=float("inf"), height=45), 
                     ft.Container(height=10), 
                     table_cont
                 ]), 
@@ -965,17 +972,17 @@ def main(page: ft.Page):
                     
                 col.controls.append(create_card(
                     content=ft.ListTile(
-                        leading=ft.Icon(ft.icons.PERSON, color=PRIMARY, size=30), 
+                        leading=ft.CircleAvatar(content=ft.Text("👤"), bgcolor="#E3F2FD", color=PRIMARY),  # Emoji
                         title=ft.Text(r['nombre'], weight="bold"), 
                         subtitle=ft.Text(f"Curso: {r['curso_nombre']} ({r['ciclo_nombre']})"), 
                         on_click=lambda e, s=r: go_det(s), 
-                        trailing=ft.Icon(ft.icons.ARROW_FORWARD_IOS, color="grey")  # ARROW_FORWARD_IOS es seguro
+                        trailing=ft.Text("→", size=20, color="grey")  # Flecha como texto
                     )
                 ))
                 
         return ft.View("/search", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/dashboard")), 
+                leading=ft.ElevatedButton("←", on_click=lambda _: navigate("/dashboard"), bgcolor=PRIMARY, color="white"), 
                 title=ft.Text(f"Búsqueda: {term}"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -1056,14 +1063,14 @@ def main(page: ft.Page):
         req_col = ft.Column()
         for r in reqs: 
             req_col.controls.append(ft.Row([
-                ft.Icon(ft.icons.CHECK if r['ok'] else ft.icons.CLOSE, color=SUCCESS if r['ok'] else DANGER),  # CHECK y CLOSE son seguros
+                ft.Text("✓" if r['ok'] else "✕", color=SUCCESS if r['ok'] else DANGER, size=20),  # Check/X como texto
                 ft.Text(r['desc'])
             ]))
         
         card = create_card(
             content=ft.Column([
                 ft.Row([
-                    ft.Icon(ft.icons.ACCOUNT_CIRCLE, size=50, color=PRIMARY),  # ACCOUNT_CIRCLE es seguro
+                    ft.CircleAvatar(content=ft.Text("👤", size=30), bgcolor=PRIMARY),  # Emoji en avatar
                     ft.Column([
                         ft.Text(s['nombre'], size=24, weight="bold"), 
                         ft.Text(f"DNI: {s.get('dni', '-')}", color="grey")
@@ -1075,7 +1082,7 @@ def main(page: ft.Page):
                 ft.Divider(), 
                 ft.Text("Contacto", weight="bold", color=SECONDARY), 
                 ft.ListTile(
-                    leading=ft.Icon(ft.icons.PHONE), 
+                    leading=ft.Text("📞", size=24),  # Emoji
                     title=ft.Text(f"{s.get('tutor_nombre', '-')}"), 
                     subtitle=ft.Text(f"{s.get('tutor_telefono', '-')}")
                 ),
@@ -1092,8 +1099,7 @@ def main(page: ft.Page):
                 req_col,
                 ft.Container(height=20), 
                 ft.ElevatedButton(
-                    "DESCARGAR FICHA EXCEL", 
-                    icon=ft.icons.DOWNLOAD, 
+                    "↓ DESCARGAR FICHA", 
                     on_click=lambda e: export_student_ficha(page, s, curso_data, stats, reqs), 
                     bgcolor="#00897B", 
                     color="white", 
@@ -1106,7 +1112,7 @@ def main(page: ft.Page):
         
         return ft.View("/student_detail", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/search")), 
+                leading=ft.ElevatedButton("←", on_click=lambda _: navigate("/search"), bgcolor=PRIMARY, color="white"), 
                 title=ft.Text("Ficha"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -1169,7 +1175,7 @@ def main(page: ft.Page):
         
         return ft.View("/pedidos", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/curso")), 
+                leading=ft.ElevatedButton("←", on_click=lambda _: navigate("/curso"), bgcolor=PRIMARY, color="white"), 
                 title=ft.Text("Documentación"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -1178,8 +1184,8 @@ def main(page: ft.Page):
                 content=ft.Column([
                     create_card(ft.Row([
                         dd, 
-                        ft.IconButton(ft.icons.ADD, on_click=add, icon_color=PRIMARY), 
-                        ft.IconButton(ft.icons.DELETE, icon_color=DANGER, on_click=dele)
+                        ft.ElevatedButton("+", on_click=add, bgcolor=PRIMARY, color="white"), 
+                        ft.ElevatedButton("✕", on_click=dele, bgcolor=DANGER, color="white")
                     ])), 
                     ft.Divider(color="transparent"), 
                     ft.Text("Marcar entregas:", weight="bold"), 
@@ -1217,7 +1223,7 @@ def main(page: ft.Page):
                 
         return ft.View("/form_student", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/curso")), 
+                leading=ft.ElevatedButton("←", on_click=lambda _: navigate("/curso"), bgcolor=PRIMARY, color="white"), 
                 title=ft.Text("Ficha del Alumno"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -1251,7 +1257,7 @@ def main(page: ft.Page):
                 
         return ft.View("/form_curso", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/dashboard")), 
+                leading=ft.ElevatedButton("←", on_click=lambda _: navigate("/dashboard"), bgcolor=PRIMARY, color="white"), 
                 title=ft.Text("Nuevo Curso"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -1278,7 +1284,7 @@ def main(page: ft.Page):
                 
         return ft.View("/form_req", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/pedidos")), 
+                leading=ft.ElevatedButton("←", on_click=lambda _: navigate("/pedidos"), bgcolor=PRIMARY, color="white"), 
                 title=ft.Text("Nuevo Requisito"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -1304,7 +1310,7 @@ def main(page: ft.Page):
             
         return ft.View("/admin", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/dashboard")), 
+                leading=ft.ElevatedButton("←", on_click=lambda _: navigate("/dashboard"), bgcolor=PRIMARY, color="white"), 
                 title=ft.Text("Admin"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -1312,12 +1318,12 @@ def main(page: ft.Page):
             ft.Container(
                 content=ft.Column([
                     create_card(ft.ListTile(
-                        leading=ft.Icon(ft.icons.CALENDAR_TODAY, color=PRIMARY),  # CALENDAR_TODAY es seguro
+                        leading=ft.Text("📅", size=30),  # Emoji
                         title=ft.Text("Ciclos Lectivos"), 
                         on_click=lambda _: navigate("/ciclos")
                     )), 
                     create_card(ft.ListTile(
-                        leading=ft.Icon(ft.icons.PEOPLE, color=PRIMARY),  # PEOPLE es seguro
+                        leading=ft.Text("👥", size=30),  # Emoji
                         title=ft.Text("Usuarios"), 
                         on_click=lambda _: navigate("/users")
                     ))
@@ -1345,7 +1351,7 @@ def main(page: ft.Page):
                 
                 col.controls.append(create_card(
                     ft.ListTile(
-                        leading=ft.Icon(ft.icons.CHECK if act else ft.icons.RADIO_BUTTON_UNCHECKED, color="green" if act else "grey"),  # RADIO_BUTTON_UNCHECKED es seguro
+                        leading=ft.Text("●" if act else "○", color="green" if act else "grey", size=24),  # Circulos como texto
                         title=ft.Text(c['nombre'], weight="bold"), 
                         trailing=tr
                     ), 
@@ -1363,7 +1369,7 @@ def main(page: ft.Page):
         
         return ft.View("/ciclos", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/admin")), 
+                leading=ft.ElevatedButton("←", on_click=lambda _: navigate("/admin"), bgcolor=PRIMARY, color="white"), 
                 title=ft.Text("Ciclos"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -1372,7 +1378,7 @@ def main(page: ft.Page):
                 content=ft.Column([
                     create_card(ft.Row([
                         tf, 
-                        ft.IconButton(ft.icons.ADD, icon_color="green", icon_size=40, on_click=add)
+                        ft.ElevatedButton("+", bgcolor="green", color="white", on_click=add)
                     ])), 
                     ft.Container(height=20), 
                     col
@@ -1398,15 +1404,16 @@ def main(page: ft.Page):
         def ld():
             col.controls.clear()
             for us in get_users():
-                tr = ft.IconButton(
-                    ft.icons.DELETE, 
-                    icon_color=DANGER, 
-                    on_click=lambda e, uid=us['id']: (delete_user(uid), ld())
+                tr = ft.ElevatedButton(
+                    "✕", 
+                    on_click=lambda e, uid=us['id']: (delete_user(uid), ld()),
+                    bgcolor=DANGER, 
+                    color="white"
                 ) if us['username'] != state['username'] else None
                 
                 col.controls.append(create_card(
                     ft.ListTile(
-                        leading=ft.Icon(ft.icons.PERSON, color=PRIMARY), 
+                        leading=ft.Text("👤", size=24),  # Emoji
                         title=ft.Text(us['username']), 
                         subtitle=ft.Text(us['role']), 
                         trailing=tr
@@ -1425,7 +1432,7 @@ def main(page: ft.Page):
         
         return ft.View("/users", [
             ft.AppBar(
-                leading=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: navigate("/admin")), 
+                leading=ft.ElevatedButton("←", on_click=lambda _: navigate("/admin"), bgcolor=PRIMARY, color="white"), 
                 title=ft.Text("Usuarios"), 
                 bgcolor=PRIMARY, 
                 color="white"
@@ -1436,7 +1443,7 @@ def main(page: ft.Page):
                         u, 
                         p, 
                         r, 
-                        ft.IconButton(ft.icons.ADD, icon_color="green", icon_size=40, on_click=add)
+                        ft.ElevatedButton("+", bgcolor="green", color="white", on_click=add)
                     ])), 
                     ft.Container(height=20), 
                     col
