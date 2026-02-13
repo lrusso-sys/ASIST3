@@ -521,10 +521,21 @@ def main(page: ft.Page):
 
 if __name__ == "__main__":
     port_env = os.environ.get("PORT")
+    
     if port_env:
-        # Modo Nube: Usamos 'ft.app' configurado para Render
-        # El parámetro 'view=ft.AppView.WEB_BROWSER' asegura compatibilidad
-        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
+        # === MODO RENDER/PRODUCCIÓN ===
+        # IMPORTANTE: No usar WEB_BROWSER en producción
+        # Usar FLET_APP_WEB para servir como web app
+        ft.app(
+            target=main, 
+            view=ft.AppView.FLET_APP_WEB,  # ← CAMBIO CRÍTICO
+            port=int(port_env), 
+            host="0.0.0.0"
+        )
     else:
-        # Modo Local
-        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
+        # === MODO LOCAL ===
+        ft.app(
+            target=main, 
+            view=ft.AppView.WEB_BROWSER,  # Esto sí funciona localmente
+            port=8550
+        )
