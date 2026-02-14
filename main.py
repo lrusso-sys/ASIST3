@@ -9,8 +9,8 @@ import io
 import threading
 import sys
 
-# --- IMPORTACIÓN DE LIBRERÍAS EXTERNAS ---
-print("--- Iniciando aplicación ---", flush=True)
+# --- IMPORTACION DE LIBRERIAS EXTERNAS ---
+print("--- Iniciando aplicacion ---", flush=True)
 
 try:
     import pandas as pd
@@ -25,7 +25,7 @@ except ImportError:
     print("⚠️ XlsxWriter no instalado.")
 
 # ==============================================================================
-# CONFIGURACIÓN DE COLORES Y ESTILO (USANDO STRINGS)
+# CONFIGURACION DE COLORES Y ESTILO (USANDO STRINGS)
 # ==============================================================================
 PRIMARY_COLOR = "indigo"
 SECONDARY_COLOR = "indigo100" 
@@ -40,7 +40,7 @@ SUCCESS_COLOR = "green"
 # ==============================================================================
 
 def get_db_connection():
-    """Obtiene conexión a PostgreSQL desde variables de entorno."""
+    """Obtiene conexion a PostgreSQL desde variables de entorno."""
     database_url = os.environ.get('DATABASE_URL')
     
     try:
@@ -86,7 +86,7 @@ def init_db():
                 cur.execute("INSERT INTO Usuarios (username, password, role) VALUES (%s, %s, %s)", ("admin", pwd, "admin"))
                 print("✅ Usuario admin creado")
             
-            # Crear ciclo lectivo del año actual si no existe ninguno activo
+            # Crear ciclo lectivo del ano actual si no existe ninguno activo
             cur.execute("SELECT COUNT(*) FROM Ciclos WHERE activo = 1")
             if cur.fetchone()[0] == 0:
                 anio_actual = str(date.today().year)
@@ -136,7 +136,7 @@ def run_query_one(query, params=()):
 # ==============================================================================
 
 def main(page: ft.Page):
-    # Configuración Global de la Página
+    # Configuracion Global de la Pagina
     page.title = "Asistencia UNSAM"
     page.theme_mode = ft.ThemeMode.LIGHT
     page.padding = 0
@@ -145,7 +145,7 @@ def main(page: ft.Page):
     # Inicializar DB al arranque
     init_db()
 
-    # Estado de sesión simple
+    # Estado de sesion simple
     state = {
         "role": None,
         "username": None,
@@ -201,11 +201,12 @@ def main(page: ft.Page):
     # --- VISTAS ---
 
     def view_login():
-        user = ft.TextField(label="Usuario", prefix_icon="person", width=300, border_radius=10, bgcolor="white")
-        pwd = ft.TextField(label="Contraseña", password=True, can_reveal_password=True, prefix_icon="lock", width=300, border_radius=10, bgcolor="white")
+        user = ft.TextField(label="Usuario", prefix_icon=ft.icons.PERSON, width=300, border_radius=10, bgcolor="white")
+        pwd = ft.TextField(label="Contrasena", password=True, can_reveal_password=True, prefix_icon=ft.icons.LOCK, width=300, border_radius=10, bgcolor="white")
 
         def login_click(e):
-            if not user.value or not pwd.value: return show_snack("Complete los campos", True)
+            if not user.value or not pwd.value: 
+                return show_snack("Complete los campos", True)
             
             hashed = hashlib.sha256(pwd.value.encode()).hexdigest()
             # Login con Postgres
@@ -216,20 +217,20 @@ def main(page: ft.Page):
                 state["username"] = user.value
                 page.go("/dashboard")
             else:
-                show_snack("Usuario o contraseña inválidos", True)
+                show_snack("Usuario o contrasena invalidos", True)
 
         return ft.View("/", [
             ft.Container(
                 content=ft.Column([
-                    ft.Icon("school_rounded", size=80, color=PRIMARY_COLOR),
+                    ft.Icon(ft.icons.SCHOOL, size=80, color=PRIMARY_COLOR),
                     ft.Text("Bienvenido", size=30, weight=ft.FontWeight.BOLD, color=PRIMARY_COLOR),
-                    ft.Text("Sistema de Gestión UNSAM", size=16, color="grey600"),
+                    ft.Text("Sistema de Gestion UNSAM", size=16, color="grey600"),
                     ft.Divider(height=40, color="transparent"),
                     user,
                     pwd,
                     ft.Container(height=20),
                     ft.ElevatedButton(
-                        "INICIAR SESIÓN", 
+                        "INICIAR SESION", 
                         on_click=login_click, 
                         width=300, height=50, 
                         bgcolor=PRIMARY_COLOR, color="white",
@@ -239,7 +240,6 @@ def main(page: ft.Page):
                 ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                 alignment=ft.alignment.center,
                 expand=True,
-                # Fondo con gradiente sutil
                 gradient=ft.LinearGradient(
                     begin=ft.alignment.top_center,
                     end=ft.alignment.bottom_center,
@@ -252,12 +252,10 @@ def main(page: ft.Page):
         # Buscar ciclo activo
         ciclo = run_query_one("SELECT * FROM Ciclos WHERE activo = 1")
         
-        # Si no hay ciclo activo, crear uno automáticamente con el año actual
+        # Si no hay ciclo activo, crear uno automaticamente con el ano actual
         if not ciclo:
             anio_actual = str(date.today().year)
-            # Intentar crear el ciclo
             run_query("INSERT INTO Ciclos (nombre, activo) VALUES (%s, 1) ON CONFLICT (nombre) DO UPDATE SET activo = 1", (anio_actual,))
-            # Volver a buscar
             ciclo = run_query_one("SELECT * FROM Ciclos WHERE activo = 1")
         
         ciclo_nombre = ciclo['nombre'] if ciclo else "Sin Ciclo Activo"
@@ -285,17 +283,16 @@ def main(page: ft.Page):
                     state["curso_nombre"] = cn
                     page.go("/curso")
 
-                # Tarjeta de Curso
                 card = ft.Container(
                     content=ft.Row([
                         ft.Row([
                             ft.Container(
-                                content=ft.Icon("class_", color="white"),
+                                content=ft.Icon(ft.icons.CLASS_, color="white"),
                                 bgcolor=PRIMARY_COLOR, border_radius=10, padding=12
                             ),
                             ft.Text(c['nombre'], size=18, weight=ft.FontWeight.W_600, color=TEXT_COLOR)
                         ]),
-                        ft.Icon("chevron_right", color="grey400")
+                        ft.Icon(ft.icons.CHEVRON_RIGHT, color="grey400")
                     ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                     padding=15,
                     bgcolor=CARD_BG,
@@ -306,14 +303,13 @@ def main(page: ft.Page):
                 )
                 cursos_grid.controls.append(card)
             
-            # Mensaje si no hay cursos
             if not cursos:
                 cursos_grid.controls.append(
                     ft.Container(
                         content=ft.Column([
-                            ft.Icon("school_outlined", size=50, color="grey400"),
+                            ft.Icon(ft.icons.SCHOOL_OUTLINED, size=50, color="grey400"),
                             ft.Text("No hay cursos creados", size=16, color="grey600"),
-                            ft.Text("Presiona el botón + para agregar uno", size=12, color="grey400")
+                            ft.Text("Presiona el boton + para agregar uno", size=12, color="grey400")
                         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                         alignment=ft.alignment.center,
                         padding=40
@@ -324,7 +320,7 @@ def main(page: ft.Page):
 
         load_cursos()
 
-        # Botón flotante para agregar curso (solo admin)
+        # Boton flotante para agregar curso (solo admin)
         fab = None
         if state["role"] == "admin":
             def add_curso_dlg(e):
@@ -344,7 +340,6 @@ def main(page: ft.Page):
                     )
                     
                     if result:
-                        # Cerrar diálogo correctamente
                         page.dialog.open = False
                         page.update()
                         show_snack(f"Curso '{tf.value}' creado correctamente")
@@ -369,11 +364,10 @@ def main(page: ft.Page):
             
             fab = ft.FloatingActionButton(icon=ft.icons.ADD, on_click=add_curso_dlg, bgcolor=PRIMARY_COLOR)
 
-        # Botón para gestionar ciclos (solo admin)
+        # Boton para gestionar ciclos (solo admin)
         ciclo_action = None
         if state["role"] == "admin":
             def manage_ciclos(e):
-                # Diálogo simple para cambiar de ciclo o crear nuevo
                 def crear_nuevo_ciclo(e):
                     anio = str(date.today().year + 1)
                     run_query("UPDATE Ciclos SET activo = 0")
@@ -381,7 +375,7 @@ def main(page: ft.Page):
                     page.dialog.open = False
                     page.update()
                     show_snack(f"Ciclo {anio} activado")
-                    page.go("/dashboard")  # Recargar
+                    page.go("/dashboard")
                 
                 page.dialog = ft.AlertDialog(
                     title=ft.Text("Gestionar Ciclos Lectivos"),
@@ -405,7 +399,7 @@ def main(page: ft.Page):
                 "Panel Principal", 
                 f"Ciclo Lectivo: {ciclo_nombre}", 
                 leading_action=ciclo_action,
-                trailing_action=ft.IconButton("logout", icon_color="white", tooltip="Salir", on_click=lambda _: page.go("/"))
+                trailing_action=ft.IconButton(ft.icons.LOGOUT, icon_color="white", tooltip="Salir", on_click=lambda _: page.go("/"))
             ),
             ft.Container(
                 content=ft.Column([
@@ -416,231 +410,62 @@ def main(page: ft.Page):
                 padding=20, expand=True
             )
         ], floating_action_button=fab)
-        
-"""  def view_dashboard():
-    # Buscar ciclo activo
-    ciclo = run_query_one("SELECT * FROM Ciclos WHERE activo = 1")
-    
-    # Si no hay ciclo activo, crear uno automáticamente con el año actual
-    if not ciclo:
-        anio_actual = str(date.today().year)
-        # Intentar crear el ciclo
-        run_query("INSERT INTO Ciclos (nombre, activo) VALUES (%s, 1) ON CONFLICT (nombre) DO UPDATE SET activo = 1", (anio_actual,))
-        # Volver a buscar
-        ciclo = run_query_one("SELECT * FROM Ciclos WHERE activo = 1")
-    
-    ciclo_nombre = ciclo['nombre'] if ciclo else "Sin Ciclo Activo"
-    
-    # Grid de Cursos
-    cursos_grid = ft.GridView(
-        runs_count=2,
-        max_extent=400,
-        child_aspect_ratio=2.5,
-        spacing=15,
-        run_spacing=15,
-    )
-
-    def load_cursos():
-        cursos_grid.controls.clear()
-        if not ciclo:
-            cursos_grid.controls.append(ft.Text("No hay ciclo lectivo activo. Contacte al administrador.", color="red"))
-            page.update()
-            return
-
-        cursos = run_query("SELECT * FROM Cursos WHERE ciclo_id = %s ORDER BY nombre", (ciclo['id'],), fetch=True)
-        for c in cursos:
-            def go_curso(e, cid=c['id'], cn=c['nombre']):
-                state["curso_id"] = cid
-                state["curso_nombre"] = cn
-                page.go("/curso")
-
-            # Tarjeta de Curso
-            card = ft.Container(
-                content=ft.Row([
-                    ft.Row([
-                        ft.Container(
-                            content=ft.Icon("class_", color="white"),
-                            bgcolor=PRIMARY_COLOR, border_radius=10, padding=12
-                        ),
-                        ft.Text(c['nombre'], size=18, weight=ft.FontWeight.W_600, color=TEXT_COLOR)
-                    ]),
-                    ft.Icon("chevron_right", color="grey400")
-                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                padding=15,
-                bgcolor=CARD_BG,
-                border_radius=15,
-                shadow=ft.BoxShadow(blur_radius=5, color="black12", offset=ft.Offset(0, 2)),
-                on_click=go_curso,
-                ink=True
-            )
-            cursos_grid.controls.append(card)
-        
-        # Mensaje si no hay cursos
-        if not cursos:
-            cursos_grid.controls.append(
-                ft.Container(
-                    content=ft.Column([
-                        ft.Icon("school_outlined", size=50, color="grey400"),
-                        ft.Text("No hay cursos creados", size=16, color="grey600"),
-                        ft.Text("Presiona el botón + para agregar uno", size=12, color="grey400")
-                    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                    alignment=ft.alignment.center,
-                    padding=40
-                )
-            )
-        
-        page.update()
-
-    load_cursos()
-
-    # Botón flotante para agregar curso (solo admin)
-    fab = None
-    if state["role"] == "admin":
-        def add_curso_dlg(e):
-            tf = ft.TextField(label="Nombre del Curso", autofocus=True)
-            
-            def save(e):
-                if not ciclo:
-                    show_snack("Error: No hay ciclo lectivo activo", True)
-                    return
-                if not tf.value or tf.value.strip() == "":
-                    show_snack("Ingrese un nombre para el curso", True)
-                    return
-                
-                result = run_query(
-                    "INSERT INTO Cursos (nombre, ciclo_id) VALUES (%s, %s)", 
-                    (tf.value.strip(), ciclo['id'])
-                )
-                
-                if result:
-                    # Cerrar diálogo correctamente
-                    page.dialog.open = False
-                    page.update()
-                    show_snack(f"Curso '{tf.value}' creado correctamente")
-                    load_cursos()
-                else:
-                    show_snack("Error al crear el curso", True)
-            
-            def cancel(e):
-                page.dialog.open = False
-                page.update()
-            
-            page.dialog = ft.AlertDialog(
-                title=ft.Text("Nuevo Curso"),
-                content=tf,
-                actions=[
-                    ft.TextButton("Cancelar", on_click=cancel),
-                    ft.ElevatedButton("Guardar", on_click=save, bgcolor=PRIMARY_COLOR, color="white")
-                ]
-            )
-            page.dialog.open = True
-            page.update()
-        
-        fab = ft.FloatingActionButton(icon=ft.icons.ADD, on_click=add_curso_dlg, bgcolor=PRIMARY_COLOR)
-
-    # Botón para gestionar ciclos (solo admin)
-    ciclo_action = None
-    if state["role"] == "admin":
-        def manage_ciclos(e):
-            # Diálogo simple para cambiar de ciclo o crear nuevo
-            def crear_nuevo_ciclo(e):
-                anio = str(date.today().year + 1)
-                run_query("UPDATE Ciclos SET activo = 0")
-                run_query("INSERT INTO Ciclos (nombre, activo) VALUES (%s, 1) ON CONFLICT (nombre) DO UPDATE SET activo = 1", (anio,))
-                page.dialog.open = False
-                page.update()
-                show_snack(f"Ciclo {anio} activado")
-                page.go("/dashboard")  # Recargar
-            
-            page.dialog = ft.AlertDialog(
-                title=ft.Text("Gestionar Ciclos Lectivos"),
-                content=ft.Text(f"Ciclo actual: {ciclo_nombre}"),
-                actions=[
-                    ft.TextButton("Cerrar", on_click=lambda e: setattr(page.dialog, 'open', False) or page.update()),
-                    ft.ElevatedButton("Nuevo Ciclo", on_click=crear_nuevo_ciclo, bgcolor=PRIMARY_COLOR, color="white")
-                ]
-            )
-            page.dialog.open = True
-            page.update()
-        
-        ciclo_action = ft.TextButton(
-            "Cambiar Ciclo", 
-            on_click=manage_ciclos,
-            style=ft.ButtonStyle(color="white")
-        )
-
-    return ft.View("/dashboard", [
-        create_header(
-            "Panel Principal", 
-            f"Ciclo Lectivo: {ciclo_nombre}", 
-            leading_action=ciclo_action,
-            trailing_action=ft.IconButton("logout", icon_color="white", tooltip="Salir", on_click=lambda _: page.go("/"))
-        ),
-        ft.Container(
-            content=ft.Column([
-                ft.Text("Mis Cursos", size=22, weight=ft.FontWeight.BOLD, color=TEXT_COLOR),
-                ft.Divider(height=20, color="transparent"),
-                cursos_grid
-            ], expand=True),
-            padding=20, expand=True
-        )
-    ], floating_action_button=fab)"""
 
     def view_curso_detail():
-        if not state["curso_id"]: return view_dashboard()
+        if not state["curso_id"]: 
+            return view_dashboard()
         
         # --- TAB 1: LISTADO ALUMNOS ---
         alumnos_col = ft.Column(scroll=ft.ScrollMode.AUTO)
+        
         def load_alumnos():
             alumnos_col.controls.clear()
             rows = run_query("SELECT * FROM Alumnos WHERE curso_id=%s ORDER BY nombre", (state["curso_id"],), fetch=True)
             for r in rows:
-                # Avatar con inicial
                 avatar = ft.CircleAvatar(
                     content=ft.Text(r['nombre'][0].upper()),
                     bgcolor=SECONDARY_COLOR, 
                     color=PRIMARY_COLOR
                 )
                 
-                # Fila de Alumno
                 tile = create_card(
                     ft.ListTile(
                         leading=avatar,
                         title=ft.Text(r['nombre'], weight=ft.FontWeight.BOLD),
                         subtitle=ft.Text(f"DNI: {r['dni'] or 'S/D'}"),
-                        trailing=ft.IconButton("edit", icon_color="grey", on_click=lambda e, s=r: open_edit_student(s)),
-                        on_click=lambda e, s=r: open_student_detail(s) # Ir a ficha
-                    ), padding=0
+                        trailing=ft.IconButton(ft.icons.EDIT, icon_color="grey", on_click=lambda e, s=r: open_edit_student(s)),
+                        on_click=lambda e, s=r: open_student_detail(s)
+                    ), 
+                    padding=0
                 )
                 alumnos_col.controls.append(tile)
             page.update()
 
-        # --- TAB 2: ASISTENCIA RÁPIDA ---
+        # --- TAB 2: ASISTENCIA RAPIDA ---
         asist_col = ft.Column(scroll=ft.ScrollMode.AUTO)
         date_pk = ft.TextField(label="Fecha", value=date.today().isoformat(), width=150, height=40, text_size=14)
         
         def load_asistencia_ui(e=None):
             asist_col.controls.clear()
             fecha = date_pk.value
-            # Obtener guardados
             guardados = run_query("SELECT alumno_id, status FROM Asistencia WHERE fecha=%s AND alumno_id IN (SELECT id FROM Alumnos WHERE curso_id=%s)", (fecha, state["curso_id"]), fetch=True)
             mapa = {g['alumno_id']: g['status'] for g in guardados}
             
             alumnos = run_query("SELECT * FROM Alumnos WHERE curso_id=%s ORDER BY nombre", (state["curso_id"],), fetch=True)
             
-            # UI de lista de asistencia
             for a in alumnos:
                 status_val = mapa.get(a['id'], "P")
                 
-                # Selector de estado
                 dd = ft.Dropdown(
                     width=100, 
                     height=40,
                     text_size=14,
                     value=status_val,
                     options=[
-                        ft.dropdown.Option("P"), ft.dropdown.Option("T"), 
-                        ft.dropdown.Option("A"), ft.dropdown.Option("J")
+                        ft.dropdown.Option("P"), 
+                        ft.dropdown.Option("T"), 
+                        ft.dropdown.Option("A"), 
+                        ft.dropdown.Option("J")
                     ],
                     on_change=lambda e, aid=a['id']: save_single_assist(aid, fecha, e.control.value)
                 )
@@ -657,7 +482,6 @@ def main(page: ft.Page):
             page.update()
 
         def save_single_assist(aid, fecha, status):
-            # Guardado automático al cambiar el dropdown (UX moderna)
             query = """
                 INSERT INTO Asistencia (alumno_id, fecha, status) VALUES (%s, %s, %s)
                 ON CONFLICT (alumno_id, fecha) DO UPDATE SET status = EXCLUDED.status
@@ -666,101 +490,113 @@ def main(page: ft.Page):
 
         # --- TAB 3: REPORTES ---
         report_col = ft.Column(scroll=ft.ScrollMode.AUTO)
+        
         def load_report_ui():
-            # Generar tabla simple
-            # (Aquí iría la lógica compleja de reportes, simplificada para UI)
-            btn_export = ft.ElevatedButton("Exportar Excel Completo", icon="download", 
-                                           bgcolor="green700", color="white", 
-                                           on_click=export_excel_action)
+            btn_export = ft.ElevatedButton(
+                "Exportar Excel Completo", 
+                icon=ft.icons.DOWNLOAD, 
+                bgcolor="green700", 
+                color="white", 
+                on_click=export_excel_action
+            )
             report_col.controls = [
                 ft.Text("Resumen del Ciclo Lectivo", size=16, weight="bold"),
                 ft.Container(height=10),
                 btn_export,
-                # Aquí podrías agregar una DataTable de Flet si quisieras mostrarlo en pantalla
             ]
 
         def export_excel_action(e):
-            if not pd or not xlsxwriter: return show_snack("Faltan librerías de Excel", True)
+            if not pd or not xlsxwriter: 
+                return show_snack("Faltan librerias de Excel", True)
             
-            # Lógica de reporte
             alumnos = run_query("SELECT * FROM Alumnos WHERE curso_id=%s ORDER BY nombre", (state["curso_id"],), fetch=True)
-            # Fetch masivo de asistencia
             asistencias = run_query("SELECT * FROM Asistencia WHERE alumno_id IN (SELECT id FROM Alumnos WHERE curso_id=%s)", (state["curso_id"],), fetch=True)
             
-            # Procesar datos
             data_list = []
             for a in alumnos:
                 a_asist = [x for x in asistencias if x['alumno_id'] == a['id']]
                 counts = {k: 0 for k in ['P','T','A','J']}
                 for r in a_asist:
-                    if r['status'] in counts: counts[r['status']] += 1
+                    if r['status'] in counts: 
+                        counts[r['status']] += 1
                 
-                total_faltas = counts['A'] + (counts['T'] * 0.5) # Ejemplo de regla
+                total_faltas = counts['A'] + (counts['T'] * 0.5)
                 data_list.append({
-                    "Alumno": a['nombre'], "DNI": a['dni'], 
-                    "Pres": counts['P'], "Aus": counts['A'], "Faltas Eq": total_faltas
+                    "Alumno": a['nombre'], 
+                    "DNI": a['dni'], 
+                    "Pres": counts['P'], 
+                    "Aus": counts['A'], 
+                    "Faltas Eq": total_faltas
                 })
             
-            # Crear Excel
             df = pd.DataFrame(data_list)
             bio = io.BytesIO()
             df.to_excel(bio, index=False)
             b64 = base64.b64encode(bio.getvalue()).decode()
             page.launch_url(f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}", web_window_name="reporte.xlsx")
 
-
         # --- ESTRUCTURA DE TABS ---
         tabs = ft.Tabs(
             selected_index=0,
             animation_duration=300,
             tabs=[
-                ft.Tab(text="Alumnos", icon="people", content=ft.Container(content=alumnos_col, padding=10)),
-                ft.Tab(text="Asistencia", icon="check_circle", content=ft.Container(content=ft.Column([
-                    ft.Row([date_pk, ft.IconButton("refresh", on_click=load_asistencia_ui)]),
+                ft.Tab(text="Alumnos", icon=ft.icons.PEOPLE, content=ft.Container(content=alumnos_col, padding=10)),
+                ft.Tab(text="Asistencia", icon=ft.icons.CHECK_CIRCLE, content=ft.Container(content=ft.Column([
+                    ft.Row([date_pk, ft.IconButton(ft.icons.REFRESH, on_click=load_asistencia_ui)]),
                     ft.Divider(),
                     asist_col
                 ]), padding=10)),
-                ft.Tab(text="Reportes", icon="bar_chart", content=ft.Container(content=report_col, padding=10))
+                ft.Tab(text="Reportes", icon=ft.icons.BAR_CHART, content=ft.Container(content=report_col, padding=10))
             ],
             expand=True,
             on_change=lambda e: load_tab_data(e.control.selected_index)
         )
 
         def load_tab_data(index):
-            if index == 0: load_alumnos()
-            elif index == 1: load_asistencia_ui()
-            elif index == 2: load_report_ui()
+            if index == 0: 
+                load_alumnos()
+            elif index == 1: 
+                load_asistencia_ui()
+            elif index == 2: 
+                load_report_ui()
 
-        # Carga inicial
         load_alumnos()
 
         # Modal Agregar Alumno
         def open_add_student(e):
             nm = ft.TextField(label="Nombre")
             dn = ft.TextField(label="DNI")
+            
             def save(e):
                 if nm.value:
                     run_query("INSERT INTO Alumnos (curso_id, nombre, dni) VALUES (%s, %s, %s)", (state["curso_id"], nm.value, dn.value))
-                    page.close_dialog()
+                    page.dialog.open = False
+                    page.update()
                     load_alumnos()
-            page.dialog = ft.AlertDialog(title=ft.Text("Nuevo Alumno"), content=ft.Column([nm, dn], height=150), actions=[ft.TextButton("Guardar", on_click=save)])
+            
+            page.dialog = ft.AlertDialog(
+                title=ft.Text("Nuevo Alumno"), 
+                content=ft.Column([nm, dn], height=150), 
+                actions=[ft.TextButton("Guardar", on_click=save)]
+            )
             page.dialog.open = True
             page.update()
         
-        # Modal Editar/Ver
         def open_edit_student(student):
-            # Similar a add pero con UPDATE
-            pass # (Simplificado para brevedad)
+            pass
 
         def open_student_detail(student):
             state["alumno_id"] = student['id']
-            # Aquí podrías navegar a una vista detallada, pero por ahora mostramos un SnackBar
             show_snack(f"Seleccionado: {student['nombre']}")
 
         return ft.View("/curso", [
-            create_header(state["curso_nombre"], "Gestión del Curso", leading_action=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard"))),
+            create_header(
+                state["curso_nombre"], 
+                "Gestion del Curso", 
+                leading_action=ft.IconButton(ft.icons.ARROW_BACK, icon_color="white", on_click=lambda _: page.go("/dashboard"))
+            ),
             ft.Container(content=tabs, expand=True, bgcolor=BG_COLOR),
-            ft.FloatingActionButton(icon="add", on_click=open_add_student, bgcolor=PRIMARY_COLOR)
+            ft.FloatingActionButton(icon=ft.icons.ADD, on_click=open_add_student, bgcolor=PRIMARY_COLOR)
         ])
 
     # --- RUTAS ---
@@ -788,9 +624,6 @@ def main(page: ft.Page):
 if __name__ == "__main__":
     port_env = os.environ.get("PORT")
     if port_env:
-        # Modo Nube: Usamos 'ft.app' configurado para Render
-        # El parámetro 'view=ft.AppView.FLET_APP_WEB' asegura compatibilidad
         ft.app(target=main, view=ft.AppView.FLET_APP_WEB, port=int(port_env), host="0.0.0.0")
     else:
-        # Modo Local
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
