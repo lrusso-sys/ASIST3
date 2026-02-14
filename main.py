@@ -89,14 +89,20 @@ class UIHelper:
 
     @staticmethod
     def create_header(title, subtitle="", leading=None, actions=None):
-    # Determinar el control del subtítulo
-        sub_control = ft.Container()  # Default vacío
-    
-        if isinstance(subtitle, str) and subtitle:
-            sub_control = ft.Text(subtitle, size=12, color="white70")
+        # Manejo seguro del subtítulo: puede ser string o ft.Control
+        if isinstance(subtitle, str):
+            # Es un string, crear Text o Container vacío
+            if subtitle:
+                sub_control = ft.Text(subtitle, size=12, color="white70")
+            else:
+                sub_control = ft.Container()
         elif isinstance(subtitle, ft.Control):
+            # Ya es un control de Flet, usarlo directamente
             sub_control = subtitle
-    
+        else:
+            # Fallback por si acaso
+            sub_control = ft.Container()
+            
         return ft.Container(
             content=ft.Row([
                 ft.Row([
@@ -107,10 +113,10 @@ class UIHelper:
                     ], spacing=2)
                 ]),
                 ft.Row(actions, spacing=0) if actions else ft.Container()
-             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-             padding=ft.padding.symmetric(horizontal=20, vertical=15),
-             bgcolor=THEME["primary"],
-             shadow=ft.BoxShadow(blur_radius=5, color="black12", offset=ft.Offset(0, 2))
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            padding=ft.padding.symmetric(horizontal=20, vertical=15),
+            bgcolor=THEME["primary"],
+            shadow=ft.BoxShadow(blur_radius=5, color="black12", offset=ft.Offset(0, 2))
         )
 
 # ==============================================================================
@@ -620,17 +626,107 @@ def view_form_student(page: ft.Page):
         ])), padding=20, bgcolor=THEME["bg"], expand=True)
     ])
 
+def view_student_detail(page: ft.Page):
+    aid = page.session.get("alumno_id")
+    if not aid: 
+        return view_dashboard(page)
+    
+    alumno = SchoolService.get_alumno(aid)
+    if not alumno:
+        UIHelper.show_snack(page, "Alumno no encontrado", True)
+        return view_dashboard(page)
+    
+    # Estadísticas
+    stats = AttendanceService.get_stats(aid)
+    history = AttendanceService.get_history(aid)
+    
+    # Controles UI
+    info_col = ft.Column([
+        ft.Text(f"Nombre: {alumno['nombre']}", size=18, weight="bold"),
+        ft.Text(f"DNI: {alumno['dni'] or 'No especificado'}"),
+        ft.Text(f"Curso: {alumno['curso_nombre']}"),
+        ft.Text(f"Ciclo: {alumno['ciclo_nombre']}"),
+        ft.Divider(),
+        ft.Text("Contacto", weight="bold"),
+        ft.Text(f"Tutor: {alumno['tutor_nombre'] or '-'}"),
+        ft.Text(f"Teléfono: {alumno['tutor_telefono'] or '-'}"),
+    ])
+    
+    if alumno['observaciones']:
+        info_col.controls.append(ft.Divider())
+        info_col.controls.append(ft.Text("Observaciones:", weight="bold"))
+        info_col.controls.append(ft.Text(alumno['observaciones'], italic=True))
+    
+    # Stats cards
+    stats_row = ft.Row([
+        UIHelper.create_card(ft.Column([ft.Text("Presente", size=12), ft.Text(str(stats['p']), size=24, weight="bold", color="green")], alignment="center"), padding=10),
+        UIHelper.create_card(ft.Column([ft.Text("Tarde", size=12), ft.Text(str(stats['t']), size=24, weight="bold", color="orange")], alignment="center"), padding=10),
+        UIHelper.create_card(ft.Column([ft.Text("Ausente", size=12), ft.Text(str(stats['a']), size=24, weight="bold", color="red")], alignment="center"), padding=10),
+        UIHelper.create_card(ft.Column([ft.Text("Faltas Eq.", size=12), ft.Text(str(stats['faltas']), size=24, weight="bold", color="indigo")], alignment="center"), padding=10),
+    ], spacing=10)
+    
+    # Historial reciente (últimos 10)
+    hist_col = ft.Column([
+        ft.Text(f"{h['fecha']}: {h['status']}", size=12) 
+        for h in history[:10]
+    ], scroll="auto", height=200)
+    
+    return ft.View("/student_detail", [
+        UIHelper.create_header(
+            alumno['nombre'], 
+            f"{alumno['curso_nombre']} - {alumno['ciclo_nombre']}",
+            leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso"))
+        ),
+        ft.Container(content=ft.Column([
+            stats_row,
+            ft.Divider(),
+            ft.Tabs(tabs=[
+                ft.Tab(text="Información", content=ft.Container(content=info_col, padding=20)),
+                ft.Tab(text="Historial Asistencia", content=ft.Container(content=hist_col, padding=20))
+            ])
+        ]), padding=20, bgcolor=THEME["bg"], expand=True)
+    ])
+
+def view_admin(page: ft.Page):
+    user = page.session.get("user")
+    if not user or user['role'] != 'admin':
+        return view_dashboard(page)
+    
+    return ft.View("/admin", [
+        UIHelper.create_header(
+            "Administración",
+            "Configuración del Sistema",
+            leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard"))
+        ),
+        ft.Container(content=ft.Column([
+            UIHelper.create_card(ft.ListTile(
+                leading=ft.Icon("calendar_month", color=THEME["primary"]),
+                title=ft.Text("Ciclos Lectivos", weight="bold"),
+                subtitle=ft.Text("Gestionar años escolares"),
+                trailing=ft.Icon("chevron_right"),
+                on_click=lambda _: page.go("/ciclos")
+            )),
+            UIHelper.create_card(ft.ListTile(
+                leading=ft.Icon("people", color=THEME["primary"]),
+                title=ft.Text("Usuarios", weight="bold"),
+                subtitle=ft.Text("Gestionar preceptores y administradores"),
+                trailing=ft.Icon("chevron_right"),
+                on_click=lambda _: page.go("/users")
+            ))
+        ]), padding=20, bgcolor=THEME["bg"], expand=True)
+    ])
+
 def view_ciclos(page: ft.Page):
     tf = ft.TextField(label="Año (Ej: 2026)", expand=True)
     col = ft.Column(scroll="auto")
     
     def load():
         col.controls.clear()
-        for c in AdminService.get_ciclos():
+        for c in SchoolService.get_ciclos():
             is_active = c['activo'] == 1
-            act_btn = ft.Container(content=ft.Text("ACTIVO", color="white", size=12, weight="bold"), bgcolor="green", padding=5, border_radius=5) if is_active else ft.ElevatedButton("Activar", on_click=lambda e, cid=c['id']: (AdminService.activar_ciclo(cid), load(), UIHelper.show_snack(page, "Ciclo Activado")))
+            act_btn = ft.Container(content=ft.Text("ACTIVO", color="white", size=12, weight="bold"), bgcolor="green", padding=5, border_radius=5) if is_active else ft.ElevatedButton("Activar", on_click=lambda e, cid=c['id']: (SchoolService.activar_ciclo(cid), load(), UIHelper.show_snack(page, "Ciclo Activado")))
             
-            del_btn = ft.IconButton("delete", icon_color="red", on_click=lambda e, cid=c['id']: (AdminService.delete_ciclo(cid), load()))
+            del_btn = ft.IconButton("delete", icon_color="red", on_click=lambda e, cid=c['id']: (SchoolService.delete_ciclo(cid), load()))
             
             col.controls.append(UIHelper.create_card(ft.ListTile(
                 leading=ft.Icon("check_circle" if is_active else "circle_outlined", color="green" if is_active else "grey"),
@@ -641,7 +737,7 @@ def view_ciclos(page: ft.Page):
     
     def add(e):
         if tf.value:
-            if AdminService.add_ciclo(tf.value): tf.value=""; load()
+            if SchoolService.add_ciclo(tf.value): tf.value=""; load()
             else: UIHelper.show_snack(page, "Error: ¿Ya existe?", True)
             
     load()
@@ -659,8 +755,8 @@ def view_users(page: ft.Page):
     
     def load():
         col.controls.clear()
-        for us in AdminService.get_users():
-            dele = ft.IconButton("delete", icon_color="red", on_click=lambda e, uid=us['id']: (AdminService.delete_user(uid), load())) if us['username'] != page.session.get("user")['username'] else None
+        for us in UserService.get_users():
+            dele = ft.IconButton("delete", icon_color="red", on_click=lambda e, uid=us['id']: (UserService.delete_user(uid), load())) if us['username'] != page.session.get("user")['username'] else None
             col.controls.append(UIHelper.create_card(ft.ListTile(
                 leading=ft.Icon("person", color=THEME["primary"]), title=ft.Text(us['username'], weight="bold"), subtitle=ft.Text(us['role']), trailing=dele
             ), padding=5))
@@ -668,7 +764,7 @@ def view_users(page: ft.Page):
 
     def add(e):
         if u.value and p.value:
-            AdminService.add_user(u.value, p.value, r.value)
+            UserService.add_user(u.value, p.value, r.value)
             u.value = ""; p.value = ""; load()
 
     load()
@@ -680,96 +776,6 @@ def view_users(page: ft.Page):
         ], expand=True), padding=20, bgcolor=THEME["bg"], expand=True)
     ])
 
-
-    def view_student_detail(page: ft.Page):
-        aid = page.session.get("alumno_id")
-        if not aid: 
-            return view_dashboard(page)
-    
-        alumno = SchoolService.get_alumno(aid)
-        if not alumno:
-            UIHelper.show_snack(page, "Alumno no encontrado", True)
-            return view_dashboard(page)
-    
-    # Estadísticas
-        stats = AttendanceService.get_stats(aid)
-        history = AttendanceService.get_history(aid)
-    
-    # Controles UI
-        info_col = ft.Column([
-            ft.Text(f"Nombre: {alumno['nombre']}", size=18, weight="bold"),
-            ft.Text(f"DNI: {alumno['dni'] or 'No especificado'}"),
-            ft.Text(f"Curso: {alumno['curso_nombre']}"),
-            ft.Text(f"Ciclo: {alumno['ciclo_nombre']}"),
-            ft.Divider(),
-            ft.Text("Contacto", weight="bold"),
-            ft.Text(f"Tutor: {alumno['tutor_nombre'] or '-'}"),
-            ft.Text(f"Teléfono: {alumno['tutor_telefono'] or '-'}"),
-        ])
-    
-        if alumno['observaciones']:
-            info_col.controls.append(ft.Divider())
-            info_col.controls.append(ft.Text("Observaciones:", weight="bold"))
-            info_col.controls.append(ft.Text(alumno['observaciones'], italic=True))
-    
-    # Stats cards
-        stats_row = ft.Row([
-            UIHelper.create_card(ft.Column([ft.Text("Presente", size=12), ft.Text(str(stats['p']), size=24, weight="bold", color="green")], alignment="center"), padding=10),
-            UIHelper.create_card(ft.Column([ft.Text("Tarde", size=12), ft.Text(str(stats['t']), size=24, weight="bold", color="orange")], alignment="center"), padding=10),
-            UIHelper.create_card(ft.Column([ft.Text("Ausente", size=12), ft.Text(str(stats['a']), size=24, weight="bold", color="red")], alignment="center"), padding=10),
-            UIHelper.create_card(ft.Column([ft.Text("Faltas Eq.", size=12), ft.Text(str(stats['faltas']), size=24, weight="bold", color="indigo")], alignment="center"), padding=10),
-        ], spacing=10)
-    
-    # Historial reciente (últimos 10)
-        hist_col = ft.Column([
-            ft.Text(f"{h['fecha']}: {h['status']}", size=12) 
-            for h in history[:10]
-        ], scroll="auto", height=200)
-    
-        return ft.View("/student_detail", [
-            UIHelper.create_header(
-                alumno['nombre'], 
-                f"{alumno['curso_nombre']} - {alumno['ciclo_nombre']}",
-                leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso"))
-            ),
-            ft.Container(content=ft.Column([
-                stats_row,
-                ft.Divider(),
-                ft.Tabs(tabs=[
-                    ft.Tab(text="Información", content=ft.Container(content=info_col, padding=20)),
-                    ft.Tab(text="Historial Asistencia", content=ft.Container(content=hist_col, padding=20))
-                ])
-            ]), padding=20, bgcolor=THEME["bg"], expand=True)
-        ])
-
-    def view_admin(page: ft.Page):
-        user = page.session.get("user")
-        if not user or user['role'] != 'admin':
-            return view_dashboard(page)
-    
-        return ft.View("/admin", [
-            UIHelper.create_header(
-                "Administración",
-                "Configuración del Sistema",
-                leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard"))
-            ),
-            ft.Container(content=ft.Column([
-                UIHelper.create_card(ft.ListTile(
-                    leading=ft.Icon("calendar_month", color=THEME["primary"]),
-                    title=ft.Text("Ciclos Lectivos", weight="bold"),
-                    subtitle=ft.Text("Gestionar años escolares"),
-                    trailing=ft.Icon("chevron_right"),
-                    on_click=lambda _: page.go("/ciclos")
-                )),
-                UIHelper.create_card(ft.ListTile(
-                    leading=ft.Icon("people", color=THEME["primary"]),
-                    title=ft.Text("Usuarios", weight="bold"),
-                    subtitle=ft.Text("Gestionar preceptores y administradores"),
-                    trailing=ft.Icon("chevron_right"),
-                    on_click=lambda _: page.go("/users")
-                ))
-            ]), padding=20, bgcolor=THEME["bg"], expand=True)
-        ])
 # ==============================================================================
 # MAIN ROUTER
 # ==============================================================================
