@@ -286,18 +286,60 @@ def main(page: ft.Page):
         ])
 
     def view_dashboard():
+    # CONTROLES DINÁMICOS que se actualizarán en tiempo real
+    ciclo_subtitle = ft.Text("Cargando ciclo...", size=12, color="white70")
+    cursos_grid = ft.GridView(runs_count=2, max_extent=400, child_aspect_ratio=2.5, spacing=15, run_spacing=15)
+
+    # Variable mutable para mantener referencia al ciclo actual
+    ciclo_actual = {"data": None}
+
+    def load_cursos():
+        """Carga los cursos del ciclo activo actual"""
+        cursos_grid.controls.clear()
+
+        # SIEMPRE consultar el ciclo activo fresco desde la base de datos
         ciclo = run_query_one("SELECT * FROM Ciclos WHERE activo = 1")
-        ciclo_nombre = ciclo['nombre'] if ciclo else "Sin Ciclo Activo"
-        
-        cursos_grid = ft.GridView(runs_count=2, max_extent=400, child_aspect_ratio=2.5, spacing=15, run_spacing=15)
+        ciclo_actual["data"] = ciclo
 
-        def load_cursos():
-            cursos_grid.controls.clear()
-            if not ciclo:
-                cursos_grid.controls.append(ft.Text("No hay ciclo lectivo activo. Vaya a Admin para crear uno."))
-                return
+        # Actualizar el subtítulo del header dinámicamente
+        if ciclo:
+            ciclo_subtitle.value = f"Ciclo Lectivo: {ciclo['nombre']}"
+        else:
+            ciclo_subtitle.value = "Sin Ciclo Activo"
 
-            cursos = run_query("SELECT * FROM Cursos WHERE ciclo_id = %s ORDER BY nombre", (ciclo['id'],), fetch=True)
+        # Forzar actualización del texto si ya está renderizado
+        if ciclo_subtitle.page:
+            ciclo_subtitle.update()
+
+        if not ciclo:
+            cursos_grid.controls.append(
+                ft.Container(
+                    content=ft.Column([
+                        ft.Icon("warning", size=50, color=WARNING_COLOR),
+                        ft.Text("No hay ciclo lectivo activo", size=16, weight="bold", color=TEXT_COLOR),
+                        ft.Text("Vaya a Configuración → Ciclos Lectivos para crear uno", size=14, color="grey600")
+                    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                    alignment=ft.alignment.center,
+                    padding=50
+                )
+            )
+            page.update()
+            return
+
+        cursos = run_query("SELECT * FROM Cursos WHERE ciclo_id = %s ORDER BY nombre", (ciclo['id'],), fetch=True)
+
+        if not cursos:
+            cursos_grid.controls.append(
+                ft.Container(
+                    content=ft.Column([
+                        ft.Icon("school", size=50, color="grey400"),
+                        ft.Text("No hay cursos en este ciclo", size=16, color="grey600")
+                    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                    alignment=ft.alignment.center,
+                    padding=50
+                )
+            )
+        else:
             for c in cursos:
                 def go_curso(e, cid=c['id'], cn=c['nombre']):
                     state["curso_id"] = cid
@@ -323,49 +365,74 @@ def main(page: ft.Page):
                     ink=True
                 )
                 cursos_grid.controls.append(card)
-            page.update()
 
-        load_cursos()
+        page.update()
 
-        fab = None
-        if state["role"] == "admin":
-            def add_curso_dlg(e):
-                tf = ft.TextField(label="Nombre del Curso")
-                
-                dlg = ft.AlertDialog(title=ft.Text("Nuevo Curso"), content=tf)
+    # FAB (Floating Action Button) para agregar curso
+    fab = None
+    if state["role"] == "admin":
+        def add_curso_dlg(e):
+            tf = ft.TextField(label="Nombre del Curso", autofocus=True)
 
-                def save(e):
-                    if not ciclo: return show_snack("Active un ciclo primero", True)
-                    if tf.value:
-                        run_query("INSERT INTO Cursos (nombre, ciclo_id) VALUES (%s, %s)", (tf.value, ciclo['id']))
-                        page.close(dlg)
-                        load_cursos()
-                
-                dlg.actions = [ft.TextButton("Guardar", on_click=save)]
-                page.open(dlg)
-                page.update()
-            
-            fab = ft.FloatingActionButton(icon="add", on_click=add_curso_dlg, bgcolor=PRIMARY_COLOR)
-
-        header_actions_list = [ft.IconButton("logout", icon_color="white", tooltip="Salir", on_click=lambda _: page.go("/"))]
-        if state["role"] == "admin":
-            header_actions_list.insert(0, ft.IconButton("settings", icon_color="white", tooltip="Configuración", on_click=lambda _: page.go("/admin")))
-
-        return ft.View("/dashboard", [
-            create_header(
-                "Panel Principal", 
-                f"Ciclo Lectivo: {ciclo_nombre}", 
-                trailing_action=ft.Row(header_actions_list, spacing=0, tight=True)
-            ),
-            ft.Container(
-                content=ft.Column([
-                    ft.Text("Mis Cursos", size=22, weight=ft.FontWeight.BOLD, color=TEXT_COLOR),
-                    ft.Divider(height=20, color="transparent"),
-                    cursos_grid
-                ], expand=True),
-                padding=20, expand=True
+            dlg = ft.AlertDialog(
+                title=ft.Text("Nuevo Curso"), 
+                content=tf,
+                actions=[
+                    ft.TextButton("Cancelar", on_click=lambda e: page.close(dlg)),
+                    ft.ElevatedButton("Guardar", bgcolor=PRIMARY_COLOR, color="white", on_click=lambda e: save_curso(e, tf, dlg))
+                ]
             )
-        ], floating_action_button=fab)
+
+            def save_curso(e, tf, dlg):
+                # Verificar ciclo activo actual (podría haber cambiado)
+                ciclo = run_query_one("SELECT * FROM Ciclos WHERE activo = 1")
+                if not ciclo: 
+                    show_snack("Active un ciclo primero", True)
+                    page.close(dlg)
+                    return
+                if tf.value:
+                    run_query("INSERT INTO Cursos (nombre, ciclo_id) VALUES (%s, %s)", (tf.value, ciclo['id']))
+                    page.close(dlg)
+                    load_cursos()  # Recargar para mostrar el nuevo curso
+                    show_snack(f"Curso '{tf.value}' creado exitosamente")
+
+            page.open(dlg)
+
+        fab = ft.FloatingActionButton(icon="add", on_click=add_curso_dlg, bgcolor=PRIMARY_COLOR, tooltip="Agregar Curso")
+
+    # Header actions
+    header_actions_list = [
+        ft.IconButton("logout", icon_color="white", tooltip="Salir", on_click=lambda _: (page.views.clear(), page.go("/")))
+    ]
+    if state["role"] == "admin":
+        header_actions_list.insert(0, ft.IconButton("settings", icon_color="white", tooltip="Configuración", on_click=lambda _: page.go("/admin")))
+
+    # Construcción de la vista
+    view = ft.View("/dashboard", [
+        create_header(
+            "Panel Principal", 
+            ciclo_subtitle,  # ← Este control se actualiza dinámicamente
+            trailing_action=ft.Row(header_actions_list, spacing=0, tight=True)
+        ),
+        ft.Container(
+            content=ft.Column([
+                ft.Row([
+                    ft.Text("Mis Cursos", size=22, weight=ft.FontWeight.BOLD, color=TEXT_COLOR),
+                    ft.IconButton("refresh", icon_color=PRIMARY_COLOR, tooltip="Actualizar", on_click=lambda e: load_cursos())
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.Divider(height=20, color="transparent"),
+                cursos_grid
+            ], expand=True),
+            padding=20, expand=True
+        )
+    ], floating_action_button=fab)
+
+    # CARGAR DATOS AL MOSTRAR LA VISTA
+    # Esto se ejecuta cada vez que se crea/navega a esta vista
+    load_cursos()
+
+    return view
+
 
     def view_admin():
         if state["role"] != "admin": return ft.View("/error", [ft.Text("Acceso Denegado")])
