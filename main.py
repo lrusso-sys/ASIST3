@@ -287,30 +287,30 @@ def main(page: ft.Page):
 
     def view_dashboard():
     # CONTROLES DINÁMICOS que se actualizarán en tiempo real
-        ciclo_subtitle = ft.Text("Cargando ciclo...", size=12, color="white70")
-        cursos_grid = ft.GridView(runs_count=2, max_extent=400, child_aspect_ratio=2.5, spacing=15, run_spacing=15)
-
+    ciclo_subtitle = ft.Text("Cargando ciclo...", size=12, color="white70")
+    cursos_grid = ft.GridView(runs_count=2, max_extent=400, child_aspect_ratio=2.5, spacing=15, run_spacing=15)
+    
     # Variable mutable para mantener referencia al ciclo actual
-        ciclo_actual = {"data": None}
-
+    ciclo_actual = {"data": None}
+    
     def load_cursos():
         """Carga los cursos del ciclo activo actual"""
         cursos_grid.controls.clear()
-
+        
         # SIEMPRE consultar el ciclo activo fresco desde la base de datos
         ciclo = run_query_one("SELECT * FROM Ciclos WHERE activo = 1")
         ciclo_actual["data"] = ciclo
-
+        
         # Actualizar el subtítulo del header dinámicamente
         if ciclo:
             ciclo_subtitle.value = f"Ciclo Lectivo: {ciclo['nombre']}"
         else:
             ciclo_subtitle.value = "Sin Ciclo Activo"
-
+        
         # Forzar actualización del texto si ya está renderizado
         if ciclo_subtitle.page:
             ciclo_subtitle.update()
-
+        
         if not ciclo:
             cursos_grid.controls.append(
                 ft.Container(
@@ -327,7 +327,7 @@ def main(page: ft.Page):
             return
 
         cursos = run_query("SELECT * FROM Cursos WHERE ciclo_id = %s ORDER BY nombre", (ciclo['id'],), fetch=True)
-
+        
         if not cursos:
             cursos_grid.controls.append(
                 ft.Container(
@@ -365,7 +365,7 @@ def main(page: ft.Page):
                     ink=True
                 )
                 cursos_grid.controls.append(card)
-
+        
         page.update()
 
     # FAB (Floating Action Button) para agregar curso
@@ -373,7 +373,7 @@ def main(page: ft.Page):
     if state["role"] == "admin":
         def add_curso_dlg(e):
             tf = ft.TextField(label="Nombre del Curso", autofocus=True)
-
+            
             dlg = ft.AlertDialog(
                 title=ft.Text("Nuevo Curso"), 
                 content=tf,
@@ -395,9 +395,9 @@ def main(page: ft.Page):
                     page.close(dlg)
                     load_cursos()  # Recargar para mostrar el nuevo curso
                     show_snack(f"Curso '{tf.value}' creado exitosamente")
-
+            
             page.open(dlg)
-
+        
         fab = ft.FloatingActionButton(icon="add", on_click=add_curso_dlg, bgcolor=PRIMARY_COLOR, tooltip="Agregar Curso")
 
     # Header actions
@@ -426,11 +426,11 @@ def main(page: ft.Page):
             padding=20, expand=True
         )
     ], floating_action_button=fab)
-
+    
     # CARGAR DATOS AL MOSTRAR LA VISTA
     # Esto se ejecuta cada vez que se crea/navega a esta vista
     load_cursos()
-
+    
     return view
 
 
