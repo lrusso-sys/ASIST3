@@ -89,25 +89,28 @@ class UIHelper:
 
     @staticmethod
     def create_header(title, subtitle="", leading=None, actions=None):
-        # Manejo seguro del subtítulo si es un control o texto
-        sub_control = subtitle
-        if isinstance(subtitle, str):
+    # Determinar el control del subtítulo
+        sub_control = ft.Container()  # Default vacío
+    
+        if isinstance(subtitle, str) and subtitle:
             sub_control = ft.Text(subtitle, size=12, color="white70")
-            
+        elif isinstance(subtitle, ft.Control):
+            sub_control = subtitle
+    
         return ft.Container(
             content=ft.Row([
                 ft.Row([
                     leading if leading else ft.Container(),
                     ft.Column([
                         ft.Text(title, size=20, weight="bold", color="white"),
-                        sub_control if sub_control else ft.Container()
+                        sub_control
                     ], spacing=2)
                 ]),
                 ft.Row(actions, spacing=0) if actions else ft.Container()
-            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            padding=ft.padding.symmetric(horizontal=20, vertical=15),
-            bgcolor=THEME["primary"],
-            shadow=ft.BoxShadow(blur_radius=5, color="black12", offset=ft.Offset(0, 2))
+             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+             padding=ft.padding.symmetric(horizontal=20, vertical=15),
+             bgcolor=THEME["primary"],
+             shadow=ft.BoxShadow(blur_radius=5, color="black12", offset=ft.Offset(0, 2))
         )
 
 # ==============================================================================
