@@ -287,11 +287,11 @@ def main(page: ft.Page):
 
     def view_dashboard():
     # CONTROLES DINÁMICOS que se actualizarán en tiempo real
-    ciclo_subtitle = ft.Text("Cargando ciclo...", size=12, color="white70")
-    cursos_grid = ft.GridView(runs_count=2, max_extent=400, child_aspect_ratio=2.5, spacing=15, run_spacing=15)
+        ciclo_subtitle = ft.Text("Cargando ciclo...", size=12, color="white70")
+        cursos_grid = ft.GridView(runs_count=2, max_extent=400, child_aspect_ratio=2.5, spacing=15, run_spacing=15)
 
     # Variable mutable para mantener referencia al ciclo actual
-    ciclo_actual = {"data": None}
+        ciclo_actual = {"data": None}
 
     def load_cursos():
         """Carga los cursos del ciclo activo actual"""
