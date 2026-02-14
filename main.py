@@ -180,13 +180,13 @@ def main(page: ft.Page):
     # --- COMPONENTES UI REUTILIZABLES ---
 
     def create_header(title, subtitle="", leading_action=None, trailing_action=None):
-    #"""Crea una barra superior estilizada."""
+    # """Crea una barra superior estilizada."""
     # Manejar si subtitle es un string o un control ft.Text
         if isinstance(subtitle, str):
-            subtitle_control = ft.Text(subtitle, size=12, color="white70") if subtitle else ft.Container()
+           subtitle_control = ft.Text(subtitle, size=12, color="white70") if subtitle else ft.Container()
         else:
-        # Si ya es un control (ft.Text), usarlo directamente
-        subtitle_control = subtitle
+         # Si ya es un control (ft.Text), usarlo directamente
+           subtitle_control = subtitle
     
         return ft.Container(
             content=ft.Row([
@@ -203,7 +203,7 @@ def main(page: ft.Page):
             bgcolor=PRIMARY_COLOR,
             shadow=ft.BoxShadow(blur_radius=5, color="black12", offset=ft.Offset(0, 2))
         )
-
+        
     def create_card(content, padding=20):
         """Contenedor estilo tarjeta Material Design."""
         return ft.Container(
