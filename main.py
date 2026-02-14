@@ -589,7 +589,7 @@ def main(page: ft.Page):
         page.update()
 
     def view_pop(view):
-    """Maneja el botón atrás del navegador/app"""
+    #"""Maneja el botón atrás del navegador/app"""
         page.views.pop()
         if page.views:
             top_view = page.views[-1]
