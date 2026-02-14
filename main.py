@@ -589,19 +589,13 @@ def main(page: ft.Page):
         page.update()
 
     def view_pop(view):
-    #"""Maneja el botón atrás del navegador/app"""
         page.views.pop()
-        if page.views:
-            top_view = page.views[-1]
-        # FIJAR: Si volvemos al dashboard, recrear la vista para refrescar datos
-            if top_view.route == "/dashboard":
-                page.views.clear()
-                page.views.append(view_dashboard())
-                page.update()
-            else:
-                page.go(top_view.route)
-        else:
-            page.go("/")
+        top_view = page.views[-1]
+        page.go(top_view.route)
+
+    page.on_route_change = route_change
+    page.on_view_pop = view_pop
+    page.go("/")
 
 if __name__ == "__main__":
     port_env = os.environ.get("PORT")
