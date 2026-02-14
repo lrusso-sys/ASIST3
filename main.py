@@ -680,6 +680,96 @@ def view_users(page: ft.Page):
         ], expand=True), padding=20, bgcolor=THEME["bg"], expand=True)
     ])
 
+
+    def view_student_detail(page: ft.Page):
+        aid = page.session.get("alumno_id")
+        if not aid: 
+            return view_dashboard(page)
+    
+        alumno = SchoolService.get_alumno(aid)
+        if not alumno:
+            UIHelper.show_snack(page, "Alumno no encontrado", True)
+            return view_dashboard(page)
+    
+    # Estadísticas
+        stats = AttendanceService.get_stats(aid)
+        history = AttendanceService.get_history(aid)
+    
+    # Controles UI
+        info_col = ft.Column([
+            ft.Text(f"Nombre: {alumno['nombre']}", size=18, weight="bold"),
+            ft.Text(f"DNI: {alumno['dni'] or 'No especificado'}"),
+            ft.Text(f"Curso: {alumno['curso_nombre']}"),
+            ft.Text(f"Ciclo: {alumno['ciclo_nombre']}"),
+            ft.Divider(),
+            ft.Text("Contacto", weight="bold"),
+            ft.Text(f"Tutor: {alumno['tutor_nombre'] or '-'}"),
+            ft.Text(f"Teléfono: {alumno['tutor_telefono'] or '-'}"),
+        ])
+    
+        if alumno['observaciones']:
+            info_col.controls.append(ft.Divider())
+            info_col.controls.append(ft.Text("Observaciones:", weight="bold"))
+            info_col.controls.append(ft.Text(alumno['observaciones'], italic=True))
+    
+    # Stats cards
+        stats_row = ft.Row([
+            UIHelper.create_card(ft.Column([ft.Text("Presente", size=12), ft.Text(str(stats['p']), size=24, weight="bold", color="green")], alignment="center"), padding=10),
+            UIHelper.create_card(ft.Column([ft.Text("Tarde", size=12), ft.Text(str(stats['t']), size=24, weight="bold", color="orange")], alignment="center"), padding=10),
+            UIHelper.create_card(ft.Column([ft.Text("Ausente", size=12), ft.Text(str(stats['a']), size=24, weight="bold", color="red")], alignment="center"), padding=10),
+            UIHelper.create_card(ft.Column([ft.Text("Faltas Eq.", size=12), ft.Text(str(stats['faltas']), size=24, weight="bold", color="indigo")], alignment="center"), padding=10),
+        ], spacing=10)
+    
+    # Historial reciente (últimos 10)
+        hist_col = ft.Column([
+            ft.Text(f"{h['fecha']}: {h['status']}", size=12) 
+            for h in history[:10]
+        ], scroll="auto", height=200)
+    
+        return ft.View("/student_detail", [
+            UIHelper.create_header(
+                alumno['nombre'], 
+                f"{alumno['curso_nombre']} - {alumno['ciclo_nombre']}",
+                leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso"))
+            ),
+            ft.Container(content=ft.Column([
+                stats_row,
+                ft.Divider(),
+                ft.Tabs(tabs=[
+                    ft.Tab(text="Información", content=ft.Container(content=info_col, padding=20)),
+                    ft.Tab(text="Historial Asistencia", content=ft.Container(content=hist_col, padding=20))
+                ])
+            ]), padding=20, bgcolor=THEME["bg"], expand=True)
+        ])
+
+    def view_admin(page: ft.Page):
+        user = page.session.get("user")
+        if not user or user['role'] != 'admin':
+            return view_dashboard(page)
+    
+        return ft.View("/admin", [
+            UIHelper.create_header(
+                "Administración",
+                "Configuración del Sistema",
+                leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard"))
+            ),
+            ft.Container(content=ft.Column([
+                UIHelper.create_card(ft.ListTile(
+                    leading=ft.Icon("calendar_month", color=THEME["primary"]),
+                    title=ft.Text("Ciclos Lectivos", weight="bold"),
+                    subtitle=ft.Text("Gestionar años escolares"),
+                    trailing=ft.Icon("chevron_right"),
+                    on_click=lambda _: page.go("/ciclos")
+                )),
+                UIHelper.create_card(ft.ListTile(
+                    leading=ft.Icon("people", color=THEME["primary"]),
+                    title=ft.Text("Usuarios", weight="bold"),
+                    subtitle=ft.Text("Gestionar preceptores y administradores"),
+                    trailing=ft.Icon("chevron_right"),
+                    on_click=lambda _: page.go("/users")
+                ))
+            ]), padding=20, bgcolor=THEME["bg"], expand=True)
+        ])
 # ==============================================================================
 # MAIN ROUTER
 # ==============================================================================
