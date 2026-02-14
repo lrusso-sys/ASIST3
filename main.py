@@ -25,7 +25,7 @@ except ImportError:
     print("⚠️ XlsxWriter no instalado. La exportación a Excel estará deshabilitada.")
 
 # ==============================================================================
-# CONFIGURACIÓN DE COLORES Y ESTILO (USANDO STRINGS)
+# CONFIGURACIÓN DE COLORES Y ESTILO
 # ==============================================================================
 PRIMARY_COLOR = "indigo"
 SECONDARY_COLOR = "indigo100" 
@@ -34,6 +34,7 @@ CARD_BG = "white"
 TEXT_COLOR = "bluegrey900"
 DANGER_COLOR = "red"
 SUCCESS_COLOR = "green"
+WARNING_COLOR = "orange"
 
 # ==============================================================================
 # 1. BASE DE DATOS (PostgreSQL)
@@ -50,7 +51,6 @@ def get_db_connection():
             conn = psycopg2.connect(database_url, sslmode='require')
             return conn
         else:
-            # Fallback local
             print("⚠️ No se detectó DATABASE_URL. Intentando conexión local...", flush=True)
             return psycopg2.connect(
                 host=os.environ.get('DB_HOST', 'localhost'),
@@ -70,7 +70,6 @@ def init_db():
         return
     try:
         with conn.cursor() as cur:
-            # Crear tablas si no existen
             cur.execute("""CREATE TABLE IF NOT EXISTS Usuarios (id SERIAL PRIMARY KEY, username TEXT UNIQUE, password TEXT, role TEXT)""")
             cur.execute("""CREATE TABLE IF NOT EXISTS Ciclos (id SERIAL PRIMARY KEY, nombre TEXT UNIQUE, activo INTEGER DEFAULT 0)""")
             cur.execute("""CREATE TABLE IF NOT EXISTS Cursos (id SERIAL PRIMARY KEY, nombre TEXT, ciclo_id INTEGER REFERENCES Ciclos(id) ON DELETE CASCADE)""")
@@ -79,13 +78,11 @@ def init_db():
             cur.execute("""CREATE TABLE IF NOT EXISTS Requisitos (id SERIAL PRIMARY KEY, curso_id INTEGER REFERENCES Cursos(id) ON DELETE CASCADE, descripcion TEXT)""")
             cur.execute("""CREATE TABLE IF NOT EXISTS Requisitos_Cumplidos (requisito_id INTEGER REFERENCES Requisitos(id) ON DELETE CASCADE, alumno_id INTEGER REFERENCES Alumnos(id) ON DELETE CASCADE, PRIMARY KEY (requisito_id, alumno_id))""")
             
-            # Admin por defecto
             cur.execute("SELECT COUNT(*) FROM Usuarios")
             if cur.fetchone()[0] == 0:
                 pwd = hashlib.sha256("admin".encode()).hexdigest()
                 cur.execute("INSERT INTO Usuarios (username, password, role) VALUES (%s, %s, %s)", ("admin", pwd, "admin"))
             
-            # Ciclo por defecto
             cur.execute("SELECT COUNT(*) FROM Ciclos")
             if cur.fetchone()[0] == 0:
                 cur.execute("INSERT INTO Ciclos (nombre, activo) VALUES (%s, 1)", (str(date.today().year),))
@@ -133,11 +130,14 @@ def db_add_ciclo(nombre):
     if not conn: return False
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE Ciclos SET activo = 0") # Desactivar otros
+            # Desactivar todos los ciclos anteriores
+            cur.execute("UPDATE Ciclos SET activo = 0")
+            # Insertar nuevo como activo
             cur.execute("INSERT INTO Ciclos (nombre, activo) VALUES (%s, 1)", (nombre,))
         conn.commit()
         return True
-    except:
+    except Exception as e:
+        print(f"Error add_ciclo: {e}")
         conn.rollback()
         return False
     finally: conn.close()
@@ -176,7 +176,6 @@ def main(page: ft.Page):
     # --- COMPONENTES UI REUTILIZABLES ---
 
     def create_header(title, subtitle="", leading_action=None, trailing_action=None):
-        """Crea una barra superior estilizada."""
         return ft.Container(
             content=ft.Row([
                 ft.Row([
@@ -194,7 +193,6 @@ def main(page: ft.Page):
         )
 
     def create_card(content, padding=20):
-        """Contenedor estilo tarjeta Material Design."""
         return ft.Container(
             content=content,
             padding=padding,
@@ -210,7 +208,6 @@ def main(page: ft.Page):
         )
 
     def show_snack(message, is_error=False):
-        # Actualización Flet moderna: page.open()
         snack = ft.SnackBar(
             content=ft.Text(message),
             bgcolor="red600" if is_error else "green600",
@@ -258,27 +255,15 @@ def main(page: ft.Page):
                 content=ft.Column([
                     ft.Icon("school_rounded", size=80, color=PRIMARY_COLOR),
                     ft.Text("Bienvenido", size=30, weight=ft.FontWeight.BOLD, color=PRIMARY_COLOR),
-                    ft.Text("Sistema de Gestión UNSAM", size=16, color="grey600"),
+                    ft.Text("Sistema de Gestión de asistencias de EST UNSAM", size=16, color="grey600"),
                     ft.Divider(height=40, color="transparent"),
                     user,
                     pwd,
                     ft.Container(height=20),
-                    ft.ElevatedButton(
-                        "INICIAR SESIÓN", 
-                        on_click=login_click, 
-                        width=300, height=50, 
-                        bgcolor=PRIMARY_COLOR, color="white",
-                        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), elevation=5)
-                    ),
-                    ft.Text("Admin default: admin / admin", size=12, color="grey")
+                    ft.ElevatedButton("INICIAR SESIÓN", on_click=login_click, width=300, height=50, bgcolor=PRIMARY_COLOR, color="white", style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10), elevation=5)),
                 ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                alignment=ft.alignment.center,
-                expand=True,
-                gradient=ft.LinearGradient(
-                    begin=ft.alignment.top_center,
-                    end=ft.alignment.bottom_center,
-                    colors=["blue50", "white"]
-                )
+                alignment=ft.alignment.center, expand=True,
+                gradient=ft.LinearGradient(begin=ft.alignment.top_center, end=ft.alignment.bottom_center, colors=["blue50", "white"])
             )
         ])
 
@@ -291,7 +276,7 @@ def main(page: ft.Page):
         def load_cursos():
             cursos_grid.controls.clear()
             if not ciclo:
-                cursos_grid.controls.append(ft.Text("No hay ciclo lectivo activo."))
+                cursos_grid.controls.append(ft.Text("No hay ciclo lectivo activo. Vaya a Admin para crear uno."))
                 return
 
             cursos = run_query("SELECT * FROM Cursos WHERE ciclo_id = %s ORDER BY nombre", (ciclo['id'],), fetch=True)
@@ -304,73 +289,48 @@ def main(page: ft.Page):
                 card = ft.Container(
                     content=ft.Row([
                         ft.Row([
-                            ft.Container(
-                                content=ft.Icon("class_", color="white"),
-                                bgcolor=PRIMARY_COLOR, border_radius=10, padding=12
-                            ),
+                            ft.Container(content=ft.Icon("class_", color="white"), bgcolor=PRIMARY_COLOR, border_radius=10, padding=12),
                             ft.Text(c['nombre'], size=18, weight=ft.FontWeight.W_600, color=TEXT_COLOR)
                         ]),
                         ft.Icon("chevron_right", color="grey400")
                     ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    padding=15,
-                    bgcolor=CARD_BG,
-                    border_radius=15,
+                    padding=15, bgcolor=CARD_BG, border_radius=15,
                     shadow=ft.BoxShadow(blur_radius=5, color="black12", offset=ft.Offset(0, 2)),
-                    on_click=go_curso,
-                    ink=True
+                    on_click=go_curso, ink=True
                 )
                 cursos_grid.controls.append(card)
             page.update()
 
         load_cursos()
 
-        # Botón flotante para agregar curso (solo admin)
         fab = None
-        # Acciones de la barra superior (Botón Configuración + Salir)
-        header_actions_list = [
-            ft.IconButton("logout", icon_color="white", tooltip="Salir", on_click=lambda _: page.go("/"))
-        ]
-
         if state["role"] == "admin":
-            # --- ARREGLO PRINCIPAL: AGREGAR EL BOTÓN DE CONFIGURACIÓN ---
-            header_actions_list.insert(0, ft.IconButton("settings", icon_color="white", tooltip="Configuración", on_click=lambda _: page.go("/admin")))
-
             def add_curso_dlg(e):
                 tf = ft.TextField(label="Nombre del Curso")
-                
-                # Definir dialogo
                 dlg = ft.AlertDialog(title=ft.Text("Nuevo Curso"), content=tf)
-                
                 def save(e):
                     if not ciclo: return show_snack("Active un ciclo primero", True)
                     if tf.value:
-                        run_query("INSERT INTO Cursos (nombre, ciclo_id) VALUES (%s, %s)", (tf.value, ciclo['id']))
-                        page.close(dlg)
-                        load_cursos()
-                
+                        if run_query("INSERT INTO Cursos (nombre, ciclo_id) VALUES (%s, %s)", (tf.value, ciclo['id'])):
+                            page.close(dlg)
+                            load_cursos()
+                        else: show_snack("Error al crear curso", True)
                 dlg.actions = [ft.TextButton("Guardar", on_click=save)]
                 page.open(dlg)
                 page.update()
-            
             fab = ft.FloatingActionButton(icon="add", on_click=add_curso_dlg, bgcolor=PRIMARY_COLOR)
 
-        # Envolvemos las acciones en un Row para pasarlas a create_header
-        header_actions_row = ft.Row(header_actions_list, spacing=0, tight=True)
+        header_actions_list = [ft.IconButton("logout", icon_color="white", tooltip="Salir", on_click=lambda _: page.go("/"))]
+        if state["role"] == "admin":
+            header_actions_list.insert(0, ft.IconButton("settings", icon_color="white", tooltip="Configuración", on_click=lambda _: page.go("/admin")))
 
         return ft.View("/dashboard", [
-            create_header(
-                "Panel Principal", 
-                f"Ciclo Lectivo: {ciclo_nombre}", 
-                trailing_action=header_actions_row
-            ),
-            ft.Container(
-                content=ft.Column([
-                    ft.Text("Mis Cursos", size=22, weight=ft.FontWeight.BOLD, color=TEXT_COLOR),
-                    ft.Divider(height=20, color="transparent"),
-                    cursos_grid
-                ], expand=True),
-                padding=20, expand=True
-            )
+            create_header("Panel Principal", f"Ciclo Lectivo: {ciclo_nombre}", trailing_action=ft.Row(header_actions_list, spacing=0, tight=True)),
+            ft.Container(content=ft.Column([
+                ft.Text("Mis Cursos", size=22, weight=ft.FontWeight.BOLD, color=TEXT_COLOR),
+                ft.Divider(height=20, color="transparent"),
+                cursos_grid
+            ], expand=True), padding=20, expand=True)
         ], floating_action_button=fab)
 
     def view_admin():
@@ -404,20 +364,8 @@ def main(page: ft.Page):
             list_col.controls.clear()
             for c in AdminService.get_ciclos():
                 is_active = c['activo'] == 1
-                
-                trailing = ft.Container()
-                if is_active:
-                    trailing = ft.Container(content=ft.Text("ACTIVO", color="white", weight="bold", size=12), bgcolor=SUCCESS_COLOR, padding=5, border_radius=5)
-                else:
-                    trailing = ft.ElevatedButton("Activar", bgcolor=WARNING_COLOR, color="white", height=30, 
-                                                 on_click=lambda e, cid=c['id']: (AdminService.activar_ciclo(cid), load_ciclos(), show_snack("Ciclo activado")))
-
-                card = create_card(ft.ListTile(
-                    leading=ft.Icon("check_circle" if is_active else "radio_button_unchecked", color=SUCCESS_COLOR if is_active else "grey"),
-                    title=ft.Text(c['nombre'], weight="bold"),
-                    trailing=trailing
-                ), padding=5)
-                list_col.controls.append(card)
+                trailing = ft.Container(content=ft.Text("ACTIVO", color="white", weight="bold", size=12), bgcolor=SUCCESS_COLOR, padding=5, border_radius=5) if is_active else ft.ElevatedButton("Activar", bgcolor=WARNING_COLOR, color="white", height=30, on_click=lambda e, cid=c['id']: (AdminService.activar_ciclo(cid), load_ciclos(), show_snack("Ciclo activado")))
+                list_col.controls.append(create_card(ft.ListTile(leading=ft.Icon("check_circle" if is_active else "radio_button_unchecked", color=SUCCESS_COLOR if is_active else "grey"), title=ft.Text(c['nombre'], weight="bold"), trailing=trailing), padding=5))
             page.update()
 
         def add_ciclo_click(e):
@@ -426,18 +374,12 @@ def main(page: ft.Page):
                 tf_nombre.value = ""
                 load_ciclos()
                 show_snack("Ciclo creado y activado")
-            else:
-                show_snack("Error al crear (¿Ya existe?)", True)
+            else: show_snack("Error al crear (¿Ya existe?)", True)
 
         load_ciclos()
-
         return ft.View("/ciclos", [
             create_header("Ciclos Lectivos", "Gestión de Años Escolares", leading_action=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/admin"))),
-            ft.Container(content=ft.Column([
-                create_card(ft.Row([tf_nombre, ft.IconButton("add_circle", icon_color=SUCCESS_COLOR, icon_size=40, on_click=add_ciclo_click)])),
-                ft.Text("Historial", weight="bold", color=TEXT_COLOR),
-                list_col
-            ], expand=True), padding=20, bgcolor=BG_COLOR, expand=True)
+            ft.Container(content=ft.Column([create_card(ft.Row([tf_nombre, ft.IconButton("add_circle", icon_color=SUCCESS_COLOR, icon_size=40, on_click=add_ciclo_click)])), ft.Text("Historial", weight="bold", color=TEXT_COLOR), list_col], expand=True), padding=20, bgcolor=BG_COLOR, expand=True)
         ])
 
     def view_users():
@@ -450,17 +392,8 @@ def main(page: ft.Page):
             list_col.controls.clear()
             for u in AdminService.get_users():
                 is_me = u['username'] == state['username']
-                trailing = None
-                if not is_me:
-                    trailing = ft.IconButton("delete", icon_color=DANGER_COLOR, on_click=lambda e, uid=u['id']: (AdminService.delete_user(uid), load_users()))
-                
-                card = create_card(ft.ListTile(
-                    leading=ft.Icon("security" if u['role']=='admin' else "person", color=PRIMARY_COLOR),
-                    title=ft.Text(u['username'], weight="bold"),
-                    subtitle=ft.Text(u['role'].upper(), color="grey"),
-                    trailing=trailing
-                ), padding=5)
-                list_col.controls.append(card)
+                trailing = ft.IconButton("delete", icon_color=DANGER_COLOR, on_click=lambda e, uid=u['id']: (AdminService.delete_user(uid), load_users())) if not is_me else None
+                list_col.controls.append(create_card(ft.ListTile(leading=ft.Icon("security" if u['role']=='admin' else "person", color=PRIMARY_COLOR), title=ft.Text(u['username'], weight="bold"), subtitle=ft.Text(u['role'].upper(), color="grey"), trailing=trailing), padding=5))
             page.update()
 
         def add_user_click(e):
@@ -469,172 +402,78 @@ def main(page: ft.Page):
                 u_tf.value = ""; p_tf.value = ""
                 load_users()
                 show_snack("Usuario creado")
-            else:
-                show_snack("Error: Usuario existe", True)
+            else: show_snack("Error: Usuario existe", True)
 
         load_users()
-
         return ft.View("/users", [
             create_header("Usuarios", "Gestión de Acceso", leading_action=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/admin"))),
-            ft.Container(content=ft.Column([
-                create_card(ft.Column([
-                    ft.Text("Nuevo Usuario", weight="bold"),
-                    ft.Row([u_tf, p_tf, r_dd]),
-                    ft.ElevatedButton("Crear Usuario", icon="add", on_click=add_user_click, bgcolor=SUCCESS_COLOR, color="white", width=float("inf"))
-                ])),
-                ft.Text("Lista de Usuarios", weight="bold", color=TEXT_COLOR),
-                list_col
-            ], expand=True), padding=20, bgcolor=BG_COLOR, expand=True)
+            ft.Container(content=ft.Column([create_card(ft.Column([ft.Text("Nuevo Usuario", weight="bold"), ft.Row([u_tf, p_tf, r_dd]), ft.ElevatedButton("Crear Usuario", icon="add", on_click=add_user_click, bgcolor=SUCCESS_COLOR, color="white", width=float("inf"))])), ft.Text("Lista de Usuarios", weight="bold", color=TEXT_COLOR), list_col], expand=True), padding=20, bgcolor=BG_COLOR, expand=True)
         ])
 
     def view_curso_detail():
         if not state["curso_id"]: return view_dashboard()
         
-        # --- TAB 1: LISTADO ALUMNOS ---
+        # TAB 1: ALUMNOS
         alumnos_col = ft.Column(scroll=ft.ScrollMode.AUTO)
         def load_alumnos():
             alumnos_col.controls.clear()
             rows = run_query("SELECT * FROM Alumnos WHERE curso_id=%s ORDER BY nombre", (state["curso_id"],), fetch=True)
             for r in rows:
-                avatar = ft.CircleAvatar(
-                    content=ft.Text(r['nombre'][0].upper()),
-                    bgcolor=SECONDARY_COLOR, 
-                    color=PRIMARY_COLOR
-                )
-                
-                # Helpers para lambdas
-                def open_edit(e, s=r):
-                    # Implementación simplificada (aquí iría un dialogo de edición)
-                    show_snack("Edición de alumno (Demo)")
-
-                def open_detail(e, s=r):
-                    state["alumno_id"] = s['id']
-                    # page.go("/student_detail") # Si tuvieras esta vista implementada
-                    show_snack(f"Seleccionado: {s['nombre']}")
-
-                tile = create_card(
-                    ft.ListTile(
-                        leading=avatar,
-                        title=ft.Text(r['nombre'], weight=ft.FontWeight.BOLD),
-                        subtitle=ft.Text(f"DNI: {r['dni'] or 'S/D'}"),
-                        trailing=ft.IconButton("edit", icon_color="grey", on_click=lambda e, s=r: open_edit(e, s)),
-                        on_click=lambda e, s=r: open_detail(e, s) 
-                    ), padding=0
-                )
+                avatar = ft.CircleAvatar(content=ft.Text(r['nombre'][0].upper()), bgcolor=SECONDARY_COLOR, color=PRIMARY_COLOR)
+                def open_student(e, s=r): state["alumno_id"] = s['id']; show_snack(f"Seleccionado: {s['nombre']}") # Placeholder para detalle
+                tile = create_card(ft.ListTile(leading=avatar, title=ft.Text(r['nombre'], weight=ft.FontWeight.BOLD), subtitle=ft.Text(f"DNI: {r['dni'] or 'S/D'}"), on_click=open_student), padding=0)
                 alumnos_col.controls.append(tile)
             page.update()
 
-        # --- TAB 2: ASISTENCIA RÁPIDA ---
+        # TAB 2: ASISTENCIA
         asist_col = ft.Column(scroll=ft.ScrollMode.AUTO)
         date_pk = ft.TextField(label="Fecha", value=date.today().isoformat(), width=150, height=40, text_size=14)
-        
         def load_asistencia_ui(e=None):
             asist_col.controls.clear()
             fecha = date_pk.value
             guardados = run_query("SELECT alumno_id, status FROM Asistencia WHERE fecha=%s AND alumno_id IN (SELECT id FROM Alumnos WHERE curso_id=%s)", (fecha, state["curso_id"]), fetch=True)
             mapa = {g['alumno_id']: g['status'] for g in guardados}
-            
-            alumnos = run_query("SELECT * FROM Alumnos WHERE curso_id=%s ORDER BY nombre", (state["curso_id"],), fetch=True)
-            
-            for a in alumnos:
-                status_val = mapa.get(a['id'], "P")
-                
-                dd = ft.Dropdown(
-                    width=100, height=40, text_size=14, value=status_val,
-                    options=[ft.dropdown.Option("P"), ft.dropdown.Option("T"), ft.dropdown.Option("A"), ft.dropdown.Option("J")],
-                    on_change=lambda e, aid=a['id']: save_single_assist(aid, fecha, e.control.value)
-                )
-                
-                row = ft.Container(
-                    content=ft.Row([
-                        ft.Text(a['nombre'], expand=True, weight=ft.FontWeight.W_500),
-                        dd
-                    ]),
-                    padding=ft.padding.symmetric(vertical=5),
-                    border=ft.border.only(bottom=ft.border.BorderSide(1, "grey200"))
-                )
-                asist_col.controls.append(row)
+            for a in run_query("SELECT * FROM Alumnos WHERE curso_id=%s ORDER BY nombre", (state["curso_id"],), fetch=True):
+                dd = ft.Dropdown(width=100, height=40, text_size=14, value=mapa.get(a['id'], "P"), options=[ft.dropdown.Option("P"), ft.dropdown.Option("T"), ft.dropdown.Option("A"), ft.dropdown.Option("J")], on_change=lambda e, aid=a['id']: run_query("INSERT INTO Asistencia (alumno_id, fecha, status) VALUES (%s, %s, %s) ON CONFLICT (alumno_id, fecha) DO UPDATE SET status = EXCLUDED.status", (aid, date_pk.value, e.control.value)))
+                asist_col.controls.append(ft.Container(content=ft.Row([ft.Text(a['nombre'], expand=True, weight="w500"), dd]), padding=ft.padding.symmetric(vertical=5), border=ft.border.only(bottom=ft.border.BorderSide(1, "grey200"))))
             page.update()
 
-        def save_single_assist(aid, fecha, status):
-            query = "INSERT INTO Asistencia (alumno_id, fecha, status) VALUES (%s, %s, %s) ON CONFLICT (alumno_id, fecha) DO UPDATE SET status = EXCLUDED.status"
-            run_query(query, (aid, fecha, status))
-
-        # --- TAB 3: REPORTES ---
+        # TAB 3: REPORTES
         report_col = ft.Column(scroll=ft.ScrollMode.AUTO)
         def load_report_ui():
-            btn_export = ft.ElevatedButton("Exportar Excel Completo", icon="download", 
-                                           bgcolor="green700", color="white", 
-                                           on_click=export_excel_action)
-            report_col.controls = [
-                ft.Text("Resumen del Ciclo Lectivo", size=16, weight="bold"),
-                ft.Container(height=10),
-                btn_export
-            ]
-
+            btn_export = ft.ElevatedButton("Exportar Excel Completo", icon="download", bgcolor="green700", color="white", on_click=export_excel_action)
+            report_col.controls = [ft.Text("Resumen del Ciclo Lectivo", size=16, weight="bold"), ft.Container(height=10), btn_export]
         def export_excel_action(e):
-            if not pd or not xlsxwriter: return show_snack("Faltan librerías de Excel", True)
-            
+            if not pd or not xlsxwriter: return show_snack("Faltan librerías", True)
             alumnos = run_query("SELECT * FROM Alumnos WHERE curso_id=%s ORDER BY nombre", (state["curso_id"],), fetch=True)
             asistencias = run_query("SELECT * FROM Asistencia WHERE alumno_id IN (SELECT id FROM Alumnos WHERE curso_id=%s)", (state["curso_id"],), fetch=True)
-            
             data_list = []
             for a in alumnos:
                 a_asist = [x for x in asistencias if x['alumno_id'] == a['id']]
                 counts = {k: 0 for k in ['P','T','A','J']}
                 for r in a_asist:
                     if r['status'] in counts: counts[r['status']] += 1
-                
                 total_faltas = counts['A'] + (counts['T'] * 0.5)
-                data_list.append({
-                    "Alumno": a['nombre'], "DNI": a['dni'], 
-                    "Pres": counts['P'], "Aus": counts['A'], "Faltas Eq": total_faltas
-                })
-            
+                data_list.append({"Alumno": a['nombre'], "DNI": a['dni'], "Pres": counts['P'], "Aus": counts['A'], "Faltas Eq": total_faltas})
             df = pd.DataFrame(data_list)
-            bio = io.BytesIO()
-            df.to_excel(bio, index=False)
-            b64 = base64.b64encode(bio.getvalue()).decode()
+            bio = io.BytesIO(); df.to_excel(bio, index=False); b64 = base64.b64encode(bio.getvalue()).decode()
             page.launch_url(f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}", web_window_name="reporte.xlsx")
 
-        tabs = ft.Tabs(
-            selected_index=0,
-            animation_duration=300,
-            tabs=[
-                ft.Tab(text="Alumnos", icon="people", content=ft.Container(content=alumnos_col, padding=10)),
-                ft.Tab(text="Asistencia", icon="check_circle", content=ft.Container(content=ft.Column([
-                    ft.Row([date_pk, ft.IconButton("refresh", on_click=load_asistencia_ui)]),
-                    ft.Divider(),
-                    asist_col
-                ]), padding=10)),
-                ft.Tab(text="Reportes", icon="bar_chart", content=ft.Container(content=report_col, padding=10))
-            ],
-            expand=True,
-            on_change=lambda e: load_tab_data(e.control.selected_index)
-        )
-
-        def load_tab_data(index):
-            if index == 0: load_alumnos()
-            elif index == 1: load_asistencia_ui()
-            elif index == 2: load_report_ui()
+        tabs = ft.Tabs(selected_index=0, animation_duration=300, tabs=[
+            ft.Tab(text="Alumnos", icon="people", content=ft.Container(content=alumnos_col, padding=10)),
+            ft.Tab(text="Asistencia", icon="check_circle", content=ft.Container(content=ft.Column([ft.Row([date_pk, ft.IconButton("refresh", on_click=load_asistencia_ui)]), ft.Divider(), asist_col]), padding=10)),
+            ft.Tab(text="Reportes", icon="bar_chart", content=ft.Container(content=report_col, padding=10))
+        ], expand=True, on_change=lambda e: (load_alumnos() if e.control.selected_index==0 else (load_asistencia_ui() if e.control.selected_index==1 else load_report_ui())))
 
         load_alumnos()
 
         def open_add_student(e):
-            nm = ft.TextField(label="Nombre")
-            dn = ft.TextField(label="DNI")
-            
+            nm = ft.TextField(label="Nombre"); dn = ft.TextField(label="DNI")
             dlg = ft.AlertDialog(title=ft.Text("Nuevo Alumno"), content=ft.Column([nm, dn], height=150))
-            
             def save(e):
-                if nm.value:
-                    run_query("INSERT INTO Alumnos (curso_id, nombre, dni) VALUES (%s, %s, %s)", (state["curso_id"], nm.value, dn.value))
-                    page.close(dlg)
-                    load_alumnos()
-            
+                if nm.value: run_query("INSERT INTO Alumnos (curso_id, nombre, dni) VALUES (%s, %s, %s)", (state["curso_id"], nm.value, dn.value)); page.close(dlg); load_alumnos()
             dlg.actions = [ft.TextButton("Guardar", on_click=save)]
-            page.open(dlg)
-            page.update()
+            page.open(dlg); page.update()
 
         return ft.View("/curso", [
             create_header(state["curso_nombre"], "Gestión del Curso", leading_action=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard"))),
@@ -644,20 +483,12 @@ def main(page: ft.Page):
 
     def route_change(route):
         page.views.clear()
-        
-        if page.route == "/":
-            page.views.append(view_login())
-        elif page.route == "/dashboard":
-            page.views.append(view_dashboard())
-        elif page.route == "/admin":
-            page.views.append(view_admin())
-        elif page.route == "/ciclos":
-            page.views.append(view_ciclos())
-        elif page.route == "/users":
-            page.views.append(view_users())
-        elif page.route == "/curso":
-            page.views.append(view_curso_detail())
-        
+        if page.route == "/": page.views.append(view_login())
+        elif page.route == "/dashboard": page.views.append(view_dashboard())
+        elif page.route == "/curso": page.views.append(view_curso_detail())
+        elif page.route == "/admin": page.views.append(view_admin())
+        elif page.route == "/ciclos": page.views.append(view_ciclos())
+        elif page.route == "/users": page.views.append(view_users())
         page.update()
 
     def view_pop(view):
