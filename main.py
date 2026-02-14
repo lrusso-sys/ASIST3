@@ -180,7 +180,7 @@ def main(page: ft.Page):
     # --- COMPONENTES UI REUTILIZABLES ---
 
     def create_header(title, subtitle="", leading_action=None, trailing_action=None):
-    """Crea una barra superior estilizada."""
+    #"""Crea una barra superior estilizada."""
     # Manejar si subtitle es un string o un control ft.Text
     if isinstance(subtitle, str):
         subtitle_control = ft.Text(subtitle, size=12, color="white70") if subtitle else ft.Container()
