@@ -188,6 +188,38 @@ class DatabaseManager:
 
 db = DatabaseManager()
 
+
+# --- BLOQUE DE DIAGNÓSTICO TEMPORAL ---
+# Pega esto justo debajo de: db = DatabaseManager()
+
+print("--- INICIANDO DIAGNÓSTICO DB ---")
+try:
+    # 1. Probar conexión
+    conn_test = db.get_connection()
+    if conn_test:
+        print("✅ Conexión a Base de Datos: EXITOSA")
+        cur_test = conn_test.cursor()
+        
+        # 2. Ver tablas existentes
+        cur_test.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+        tablas = cur_test.fetchall()
+        print(f"📂 Tablas encontradas: {tablas}")
+
+        # 3. Ver contenido de Ciclos
+        try:
+            cur_test.execute("SELECT * FROM Ciclos")
+            ciclos = cur_test.fetchall()
+            print(f"📅 Contenido de tabla CICLOS: {ciclos}")
+        except Exception as e:
+            print(f"❌ Error leyendo tabla Ciclos: {e}")
+
+        conn_test.close()
+    else:
+        print("❌ FALLO TOTAL: No se pudo conectar a la DB (conn es None)")
+except Exception as e:
+    print(f"❌ ERROR CRÍTICO EN DIAGNÓSTICO: {e}")
+print("--- FIN DIAGNÓSTICO ---")
+# ----------------------------------------
 # ==============================================================================
 # CAPA 3: SERVICIOS DE NEGOCIO
 # ==============================================================================
