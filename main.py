@@ -418,9 +418,12 @@ def view_dashboard(page: ft.Page):
     if user['role'] == "admin":
         def add_curso_dlg(e):
             ciclo_actual = SchoolService.get_ciclo_activo()
+            
+            # --- CORRECCIÓN AQUÍ ---
             if not ciclo_actual: 
-                page.close(dlg) # Cerrar dialogo si estaba abierto
+                # Eliminamos 'page.close(dlg)' porque dlg no existe aún.
                 return UIHelper.show_snack(page, "Debe activar un ciclo primero", True)
+            # -----------------------
             
             tf_nombre = ft.TextField(label="Nombre del Curso")
             
@@ -429,7 +432,7 @@ def view_dashboard(page: ft.Page):
                     if SchoolService.add_curso(tf_nombre.value, ciclo_actual['id']):
                         page.close(dlg)
                         load()
-                        page.update() # Aquí sí actualizamos porque es un evento de usuario
+                        page.update()
                         UIHelper.show_snack(page, "Curso creado")
                     else: 
                         UIHelper.show_snack(page, "Error al crear", True)
@@ -438,7 +441,7 @@ def view_dashboard(page: ft.Page):
             page.open(dlg)
             
         fab = ft.FloatingActionButton(icon="add", on_click=add_curso_dlg, bgcolor=THEME["primary"])
-
+        
     return ft.View("/dashboard", [
         UIHelper.create_header("Panel Principal", subtitle=txt_ciclo, actions=actions),
         ft.Container(content=ft.Column([
