@@ -2,13 +2,13 @@ import flet as ft
 import psycopg2
 import psycopg2.extras
 import hashlib
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import os
 import threading
 import io
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v6.0 (Legajo Unificado) ---", flush=True)
+print("--- Oñepyrũ aplicación v7.0 (Reportes Avanzados) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -26,7 +26,6 @@ THEME = {
     "danger": "red",
     "success": "green",
     "warning": "orange",
-    "info": "blue",
     "text": "bluegrey900"
 }
 
@@ -323,16 +322,23 @@ class AttendanceService:
 
     @staticmethod
     def get_stats(aid):
-        # AHORA INCLUYE S (Suspensión) y J (Justificada)
+        # Stats globales
         rows = db.fetch_all("SELECT status FROM Asistencia WHERE alumno_id = %s", (aid,))
+        return AttendanceService._calc_stats(rows)
+
+    @staticmethod
+    def get_stats_range(aid, f_inicio, f_fin):
+        # Stats POR RANGO DE FECHAS
+        rows = db.fetch_all("SELECT status FROM Asistencia WHERE alumno_id = %s AND fecha >= %s AND fecha <= %s", (aid, f_inicio, f_fin))
+        return AttendanceService._calc_stats(rows)
+    
+    @staticmethod
+    def _calc_stats(rows):
         c = {k: 0 for k in ['P','T','A','J','S','N']}
         for r in rows:
             if r['status'] in c: c[r['status']] += 1
         
-        # Cálculo de faltas (media falta por tarde, etc. Ajustar según reglamento)
-        # S (Suspensión) suele contar como falta completa o no, depende la escuela. Acá la cuento como falta.
-        faltas = c['A'] + c['S'] + (c['T'] * 0.5) # Ejemplo: Tarde es media falta
-        
+        faltas = c['A'] + c['S'] + (c['T'] * 0.5) 
         total = sum(c[k] for k in ['P','T','A','J','S'])
         pct = (1 - (faltas / total)) * 100 if total > 0 else 100
         
@@ -345,34 +351,87 @@ class AttendanceService:
     def get_history(aid):
         return db.fetch_all("SELECT fecha, status FROM Asistencia WHERE alumno_id = %s ORDER BY fecha DESC", (aid,))
 
+    @staticmethod
+    def get_history_range(aid, f_inicio, f_fin):
+        return db.fetch_all("SELECT fecha, status FROM Asistencia WHERE alumno_id = %s AND fecha >= %s AND fecha <= %s ORDER BY fecha ASC", (aid, f_inicio, f_fin))
+
 class ReportService:
     @staticmethod
-    def generate_excel_curso(curso_id):
+    def generate_excel_curso(curso_id, f_inicio, f_fin):
         if not xlsxwriter: return None
         output = io.BytesIO()
         workbook = xlsxwriter.Workbook(output)
-        ws = workbook.add_worksheet("Alumnos")
-        bold = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1})
-        border = workbook.add_format({'border': 1})
+        ws = workbook.add_worksheet("Curso")
         
-        headers = ["Nombre", "DNI", "Tutor", "% Asist.", "Faltas", "Docs Faltantes"]
-        ws.write_row(0, 0, headers, bold)
-        ws.set_column(0, 0, 25) 
+        # Formatos
+        title_fmt = workbook.add_format({'bold': True, 'font_size': 14, 'align': 'center'})
+        header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1})
+        cell_fmt = workbook.add_format({'border': 1})
+        red_fmt = workbook.add_format({'border': 1, 'color': 'red'})
+
+        # Título
+        ws.merge_range('A1:F1', f"Informe de Asistencia: {f_inicio} al {f_fin}", title_fmt)
+        
+        headers = ["Nombre", "DNI", "Presentes", "Faltas Totales", "% Asist.", "Situación"]
+        ws.write_row(2, 0, headers, header_fmt)
+        ws.set_column(0, 0, 30) # Nombre ancho
         
         alumnos = SchoolService.get_alumnos(curso_id)
-        reqs = DocService.get_requisitos_curso(curso_id)
         
-        for i, a in enumerate(alumnos, start=1):
-            stats = AttendanceService.get_stats(a['id'])
-            estado_docs = DocService.get_estado_alumno(a['id'])
-            faltantes = [r['descripcion'] for r in reqs if estado_docs.get(r['id']) != 1]
+        for i, a in enumerate(alumnos, start=3):
+            # Calculamos stats SOLO para el periodo
+            stats = AttendanceService.get_stats_range(a['id'], f_inicio, f_fin)
             
-            ws.write(i, 0, a['nombre'], border)
-            ws.write(i, 1, a['dni'] or "-", border)
-            ws.write(i, 2, f"{a['tutor_nombre'] or ''}", border)
-            ws.write(i, 3, f"{stats['pct']}%", border)
-            ws.write(i, 4, stats['faltas'], border)
-            ws.write(i, 5, ", ".join(faltantes), border)
+            ws.write(i, 0, a['nombre'], cell_fmt)
+            ws.write(i, 1, a['dni'] or "-", cell_fmt)
+            ws.write(i, 2, stats['p'], cell_fmt)
+            ws.write(i, 3, stats['faltas'], cell_fmt)
+            ws.write(i, 4, f"{stats['pct']}%", cell_fmt)
+            
+            situacion = "Regular" if stats['pct'] >= 75 else "En Riesgo"
+            ws.write(i, 5, situacion, red_fmt if situacion == "En Riesgo" else cell_fmt)
+            
+        workbook.close()
+        output.seek(0)
+        return output
+
+    @staticmethod
+    def generate_excel_alumno(alumno_id, f_inicio, f_fin):
+        if not xlsxwriter: return None
+        alumno = SchoolService.get_alumno(alumno_id)
+        historial = AttendanceService.get_history_range(alumno_id, f_inicio, f_fin)
+        stats = AttendanceService.get_stats_range(alumno_id, f_inicio, f_fin)
+        
+        output = io.BytesIO()
+        workbook = xlsxwriter.Workbook(output)
+        ws = workbook.add_worksheet("Alumno")
+        
+        bold = workbook.add_format({'bold': True})
+        header = workbook.add_format({'bold': True, 'bg_color': '#EEEEEE', 'border': 1})
+        cell = workbook.add_format({'border': 1})
+        
+        # Info Alumno
+        ws.write(0, 0, f"Alumno: {alumno['nombre']}", bold)
+        ws.write(1, 0, f"DNI: {alumno['dni']}", bold)
+        ws.write(2, 0, f"Período: {f_inicio} al {f_fin}")
+        
+        # Resumen
+        ws.write(4, 0, "RESUMEN DEL PERIODO", bold)
+        ws.write(5, 0, f"Presentes: {stats['p']}")
+        ws.write(6, 0, f"Ausentes: {stats['a']}")
+        ws.write(7, 0, f"Faltas Totales: {stats['faltas']}")
+        ws.write(8, 0, f"Porcentaje: {stats['pct']}%")
+        
+        # Detalle Diario
+        ws.write(10, 0, "Fecha", header)
+        ws.write(10, 1, "Estado", header)
+        ws.set_column(0, 0, 15)
+        
+        for i, h in enumerate(historial, start=11):
+            ws.write(i, 0, h['fecha'], cell)
+            # Traducción de códigos
+            mapa = {'P': 'Presente', 'A': 'Ausente', 'T': 'Tarde', 'S': 'Suspendido', 'J': 'Justificado'}
+            ws.write(i, 1, mapa.get(h['status'], h['status']), cell)
             
         workbook.close()
         output.seek(0)
@@ -485,32 +544,61 @@ def view_curso(page: ft.Page):
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
     
+    # --- EXPORTADOR ---
     file_picker = ft.FilePicker(on_result=lambda e: save_file_result(e))
     page.overlay.append(file_picker)
+    
+    # Variables temporales para el rango de fechas seleccionado
+    export_range = {"start": "", "end": ""}
 
     def save_file_result(e: ft.FilePickerResultEvent):
         if e.path:
             try:
-                excel_data = ReportService.generate_excel_curso(cid)
+                # Usamos las fechas guardadas
+                excel_data = ReportService.generate_excel_curso(cid, export_range["start"], export_range["end"])
                 if excel_data:
                     with open(e.path, "wb") as f: f.write(excel_data.read())
                     UIHelper.show_snack(page, "Archivo guardado exitosamente.")
                 else: UIHelper.show_snack(page, "Error al generar Excel", True)
             except Exception as ex: UIHelper.show_snack(page, f"Error: {ex}", True)
 
-    def export_excel(e):
-        fname = f"Reporte_{cn}_{date.today()}.xlsx"
-        file_picker.save_file(file_name=fname)
+    def open_export_dlg(e):
+        # Fechas por defecto (Mes actual)
+        today = date.today()
+        first_day = today.replace(day=1)
+        
+        tf_start = ft.TextField(label="Inicio (YYYY-MM-DD)", value=first_day.isoformat(), width=150)
+        tf_end = ft.TextField(label="Fin (YYYY-MM-DD)", value=today.isoformat(), width=150)
+        
+        def confirm_export(e):
+            export_range["start"] = tf_start.value
+            export_range["end"] = tf_end.value
+            fname = f"Reporte_{cn}_{tf_start.value}_al_{tf_end.value}.xlsx"
+            page.close(dlg)
+            file_picker.save_file(file_name=fname)
+            
+        dlg = ft.AlertDialog(
+            title=ft.Text("Exportar Asistencia"),
+            content=ft.Column([
+                ft.Text("Seleccione el período a exportar:"),
+                ft.Row([tf_start, tf_end])
+            ], height=100),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda e: page.close(dlg)),
+                ft.ElevatedButton("Descargar Excel", on_click=confirm_export, bgcolor="green", color="white")
+            ]
+        )
+        page.open(dlg)
 
-    # --- Requisitos (Docs) ---
+    # --- REQUISITOS ---
     def open_reqs_dlg(e):
-        tf_req = ft.TextField(label="Nuevo Requisito", expand=True, on_submit=lambda e: add_req_local(e))
+        tf_req = ft.TextField(label="Nuevo Requisito", expand=True)
         list_col = ft.Column(scroll="auto")
         
         def load_reqs_local():
             list_col.controls.clear()
             reqs = DocService.get_requisitos_curso(cid)
-            if not reqs: list_col.controls.append(ft.Text("Sin requisitos. Agregá uno.", italic=True, size=12, color="grey"))
+            if not reqs: list_col.controls.append(ft.Text("Sin requisitos.", italic=True, size=12, color="grey"))
             for r in reqs:
                 list_col.controls.append(ft.Container(
                     content=ft.Row([
@@ -527,10 +615,13 @@ def view_curso(page: ft.Page):
                 tf_req.value = ""; load_reqs_local(); tf_req.focus()
             else: tf_req.error_text = "Escribí algo"; page.update()
 
+        tf_req.on_submit = add_req_local
         load_reqs_local()
+        
         dlg = ft.AlertDialog(
             title=ft.Text("Documentación del Curso"),
             content=ft.Container(content=ft.Column([
+                ft.Text("Escribí y dale Enter:", size=12, color="grey"),
                 ft.Row([tf_req, ft.ElevatedButton("Agregar", on_click=add_req_local, bgcolor="green", color="white")]),
                 ft.Divider(),
                 ft.Container(content=list_col, height=200, border=ft.border.all(1, "grey200"), border_radius=5, padding=5) 
@@ -577,17 +668,15 @@ def view_curso(page: ft.Page):
             val = status_map.get(a['id'], def_val)
             dd = ft.Dropdown(
                 width=100, height=40, text_size=14, value=val,
-                options=[ft.dropdown.Option(x) for x in ["P","T","A","J","S","N"]], # Agregado S
+                options=[ft.dropdown.Option(x) for x in ["P","T","A","J","S","N"]], 
                 on_change=lambda e, aid=a['id']: AttendanceService.mark(aid, date_tf.value, e.control.value)
             )
             asist_col.controls.append(ft.Container(content=ft.Row([ft.Text(a['nombre'], expand=True, weight="w500"), dd]), padding=5, border=ft.border.only(bottom=ft.border.BorderSide(1, "grey200"))))
         page.update()
     
-    # --- NUEVO: Botón "Guardar" explícito para la asistencia ---
     def guardar_asistencia_manual(e):
-        # En realidad ya se guardó en tiempo real, pero esto da feedback visual
         UIHelper.show_snack(page, "✅ Asistencia guardada correctamente.")
-        page.go("/dashboard") # Volver al dashboard da sensación de "tarea terminada"
+        page.go("/dashboard")
 
     tabs = ft.Tabs(selected_index=0, tabs=[
         ft.Tab(text="Alumnos", icon="people", content=ft.Container(content=lv, padding=10)),
@@ -603,24 +692,22 @@ def view_curso(page: ft.Page):
     
     actions_header = [
         ft.ElevatedButton("Docs", color="white", bgcolor="orange", on_click=open_reqs_dlg),
-        ft.ElevatedButton("Excel", color="white", bgcolor="green", on_click=export_excel)
+        ft.ElevatedButton("Excel", color="white", bgcolor="green", on_click=open_export_dlg) # Llama al dialogo
     ]
     
-    # Botón Flotante Grande para Guardar
     fab_save = ft.FloatingActionButton(
         icon="save", text="GUARDAR ASISTENCIA", 
         bgcolor=THEME["primary"], 
         on_click=guardar_asistencia_manual,
-        width=200 # Ancho para que se lea el texto
+        width=200 
     ) if tabs.selected_index == 1 else ft.FloatingActionButton(icon="person_add", bgcolor=THEME["primary"], on_click=lambda _: (page.session.set("alumno_id_edit", None), page.go("/form_student")))
 
-    # Actualizar FAB según tab
     def on_tab_change(e):
-        if e.control.selected_index == 1: # Tab Asistencia
+        if e.control.selected_index == 1: 
             page.views[-1].floating_action_button = ft.FloatingActionButton(
                 icon="save", text="GUARDAR ASISTENCIA", bgcolor="green", on_click=guardar_asistencia_manual, width=220
             )
-        else: # Tab Alumnos
+        else:
             page.views[-1].floating_action_button = ft.FloatingActionButton(
                 icon="person_add", bgcolor=THEME["primary"], on_click=lambda _: (page.session.set("alumno_id_edit", None), page.go("/form_student"))
             )
@@ -680,6 +767,34 @@ def view_student_detail(page: ft.Page):
     stats = AttendanceService.get_stats(aid)
     history = AttendanceService.get_history(aid)
     
+    # --- EXPORTAR INDIVIDUAL ---
+    file_picker = ft.FilePicker(on_result=lambda e: save_individual_result(e))
+    page.overlay.append(file_picker)
+    export_range_ind = {"start": "", "end": ""}
+
+    def save_individual_result(e):
+        if e.path:
+            excel_data = ReportService.generate_excel_alumno(aid, export_range_ind["start"], export_range_ind["end"])
+            if excel_data:
+                with open(e.path, "wb") as f: f.write(excel_data.read())
+                UIHelper.show_snack(page, "Informe individual guardado.")
+            else: UIHelper.show_snack(page, "Error al generar.", True)
+
+    def open_export_ind(e):
+        today = date.today()
+        first_day = today.replace(day=1)
+        tf_start = ft.TextField(label="Inicio", value=first_day.isoformat(), width=130)
+        tf_end = ft.TextField(label="Fin", value=today.isoformat(), width=130)
+        
+        def confirm(e):
+            export_range_ind["start"] = tf_start.value
+            export_range_ind["end"] = tf_end.value
+            page.close(dlg)
+            file_picker.save_file(file_name=f"Informe_{alumno['nombre']}.xlsx")
+            
+        dlg = ft.AlertDialog(title=ft.Text("Exportar Historial"), content=ft.Row([tf_start, tf_end]), actions=[ft.ElevatedButton("Descargar", on_click=confirm)])
+        page.open(dlg)
+
     # --- BLOQUE 1: CABECERA Y DATOS ---
     card_info = UIHelper.create_card(ft.Column([
         ft.Row([
@@ -694,67 +809,42 @@ def view_student_detail(page: ft.Page):
         ft.Row([ft.Icon("phone", size=16), ft.Text(f"Tutor: {alumno['tutor_nombre'] or '-'} ({alumno['tutor_telefono'] or '-'})")])
     ]))
 
-    # --- BLOQUE 2: ESTADÍSTICAS EXPANDIDAS ---
+    # --- BLOQUE 2: ESTADÍSTICAS ---
     def stat_box(label, value, color):
         return ft.Container(
-            content=ft.Column([
-                ft.Text(str(value), size=24, weight="bold", color=color),
-                ft.Text(label, size=11, color="grey")
-            ], horizontal_alignment="center"),
+            content=ft.Column([ft.Text(str(value), size=24, weight="bold", color=color), ft.Text(label, size=11, color="grey")], horizontal_alignment="center"),
             padding=10, bgcolor="white", border_radius=8, border=ft.border.all(1, "grey200"), expand=True
         )
 
     card_stats = UIHelper.create_card(ft.Column([
         ft.Text("Estadísticas del Ciclo", weight="bold"),
         ft.Container(height=10),
-        ft.Row([
-            stat_box("Presentes", stats['p'], "green"),
-            stat_box("Ausentes", stats['a'], "red"),
-            stat_box("Tardes", stats['t'], "orange"),
-        ]),
+        ft.Row([stat_box("Presentes", stats['p'], "green"), stat_box("Ausentes", stats['a'], "red"), stat_box("Tardes", stats['t'], "orange")]),
         ft.Container(height=5),
-        ft.Row([
-            stat_box("Justif.", stats['j'], "blue"),
-            stat_box("Suspen.", stats['s'], "purple"),
-            stat_box("Faltas Tot.", stats['faltas'], "text"),
-        ])
+        ft.Row([stat_box("Justif.", stats['j'], "blue"), stat_box("Suspen.", stats['s'], "purple"), stat_box("Faltas Tot.", stats['faltas'], "text")])
     ]))
 
-    # --- BLOQUE 3: DOCUMENTACIÓN (CHECKLIST) ---
+    # --- BLOQUE 3: DOCS ---
     docs_col = ft.Column()
     reqs = DocService.get_requisitos_curso(alumno['curso_id'])
     estados = DocService.get_estado_alumno(aid)
     
     if not reqs: docs_col.controls.append(ft.Text("No hay requisitos.", italic=True))
-    
     for r in reqs:
         is_checked = estados.get(r['id']) == 1
-        docs_col.controls.append(ft.Checkbox(
-            label=r['descripcion'], value=is_checked, 
-            on_change=lambda e, rid=r['id']: (DocService.toggle_entrega(aid, rid, e.control.value), UIHelper.show_snack(page, "Actualizado"))
-        ))
+        docs_col.controls.append(ft.Checkbox(label=r['descripcion'], value=is_checked, on_change=lambda e, rid=r['id']: (DocService.toggle_entrega(aid, rid, e.control.value), UIHelper.show_snack(page, "Actualizado"))))
     
-    card_docs = UIHelper.create_card(ft.Column([
-        ft.Text("Legajo / Documentación", weight="bold"),
-        ft.Divider(),
-        docs_col
-    ]))
+    card_docs = UIHelper.create_card(ft.Column([ft.Text("Legajo / Documentación", weight="bold"), ft.Divider(), docs_col]))
 
-    # --- BLOQUE 4: HISTORIAL (ABAJO) ---
+    # --- BLOQUE 4: HISTORIAL ---
     hist_col = ft.Column([ft.Text(f"{h['fecha']}: {h['status']}", size=14) for h in history], scroll="auto", height=200)
     card_hist = UIHelper.create_card(ft.Column([
-        ft.Text("Historial Completo", weight="bold"),
+        ft.Row([ft.Text("Historial Completo", weight="bold"), ft.IconButton("file_download", icon_color="green", tooltip="Exportar Excel", on_click=open_export_ind)], alignment="spaceBetween"),
         ft.Divider(),
         hist_col
     ]))
 
-    # Layout Unificado: Scrollable
-    content = ft.Column([
-        card_info,
-        card_stats,
-        card_docs,
-        card_hist
-    ], scroll="auto", expand=True)
+    content = ft.Column([card_info, card_stats, card_docs, card_hist], scroll="auto", expand=True)
 
     return ft.View("/student_detail", [
         UIHelper.create_header("Legajo del Alumno", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso"))),
@@ -889,27 +979,26 @@ if __name__ == "__main__":
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
     else:
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
-
 # ==============================================================================
 # 🧨 ZONA DE LIMPIEZA V5 (REQUERIDO PARA ACTIVAR LOS NUEVOS CAMBIOS)
 # ==============================================================================
-"""try:
-    print("--- 🧹 LIMPIEZA DB PARA V5 (ESTRUCTURA NUEVA) ---")
-    conn_fix = db.get_connection()
-    if conn_fix:
-        with conn_fix.cursor() as cur:
-            # Borramos para recrear porque cambio la tabla Requisitos
-            cur.execute("DROP TABLE IF EXISTS Asistencia CASCADE")
-            cur.execute("DROP TABLE IF EXISTS Alumnos CASCADE") 
-            cur.execute("DROP TABLE IF EXISTS Cursos CASCADE")
-            cur.execute("DROP TABLE IF EXISTS Ciclos CASCADE")
-            cur.execute("DROP TABLE IF EXISTS Usuario_Cursos CASCADE") 
-            cur.execute("DROP TABLE IF EXISTS Requisitos CASCADE")     
-            cur.execute("DROP TABLE IF EXISTS Documentacion_Alumno CASCADE")
-            conn_fix.commit()
-        conn_fix.close()
-        print("✅ TABLAS BORRADAS.")
-        print("🔨 RE-CREANDO ESTRUCTURA V5...")
-        db._init_db_structure()
-except Exception as e:
-    print(f"❌ ERROR EN LIMPIEZA: {e}")"""
+#try:
+ #   print("--- 🧹 LIMPIEZA DB PARA V5 (ESTRUCTURA NUEVA) ---")
+ #   conn_fix = db.get_connection()
+  #  if conn_fix:
+   #     with conn_fix.cursor() as cur:
+    #        # Borramos para recrear porque cambio la tabla Requisitos
+     #       cur.execute("DROP TABLE IF EXISTS Asistencia CASCADE")
+      #      cur.execute("DROP TABLE IF EXISTS Alumnos CASCADE") 
+       #     cur.execute("DROP TABLE IF EXISTS Cursos CASCADE")
+        #    cur.execute("DROP TABLE IF EXISTS Ciclos CASCADE")
+         #   cur.execute("DROP TABLE IF EXISTS Usuario_Cursos CASCADE") 
+          #  cur.execute("DROP TABLE IF EXISTS Requisitos CASCADE")     
+           # cur.execute("DROP TABLE IF EXISTS Documentacion_Alumno CASCADE")
+            #conn_fix.commit()
+#        conn_fix.close()
+ #       print("✅ TABLAS BORRADAS.")
+  #      print("🔨 RE-CREANDO ESTRUCTURA V5...")
+   #     db._init_db_structure()
+#except Exception as e:
+ #   print(f"❌ ERROR EN LIMPIEZA: {e}")
