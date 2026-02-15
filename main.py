@@ -6,10 +6,10 @@ from datetime import date, datetime
 import os
 import threading
 import io
-import base64
+import base64 # Importante para la descarga directa
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v7.1 (Fix Visual + Debug) ---", flush=True)
+print("--- Oñepyrũ aplicación v8.0 (Full Export Fix) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -358,11 +358,7 @@ class AttendanceService:
 class ReportService:
     @staticmethod
     def generate_excel_curso(curso_id, f_inicio, f_fin):
-        print(f"[DEBUG EXCEL] Iniciando reporte Curso ID: {curso_id} ({f_inicio} a {f_fin})")
-        if not xlsxwriter: 
-            print("[DEBUG EXCEL] ERROR: Librería xlsxwriter no detectada.")
-            return None
-            
+        if not xlsxwriter: return None
         try:
             output = io.BytesIO()
             workbook = xlsxwriter.Workbook(output)
@@ -380,8 +376,6 @@ class ReportService:
             ws.set_column(0, 0, 30) 
             
             alumnos = SchoolService.get_alumnos(curso_id)
-            print(f"[DEBUG EXCEL] Alumnos encontrados: {len(alumnos)}")
-            
             for i, a in enumerate(alumnos, start=3):
                 stats = AttendanceService.get_stats_range(a['id'], f_inicio, f_fin)
                 
@@ -396,15 +390,11 @@ class ReportService:
                 
             workbook.close()
             output.seek(0)
-            print("[DEBUG EXCEL] Excel generado exitosamente.")
             return output
-        except Exception as e:
-            print(f"[DEBUG EXCEL] EXCEPCIÓN GENERANDO: {e}")
-            return None
+        except: return None
 
     @staticmethod
     def generate_excel_alumno(alumno_id, f_inicio, f_fin):
-        print(f"[DEBUG EXCEL] Reporte Individual ID: {alumno_id}")
         if not xlsxwriter: return None
         try:
             alumno = SchoolService.get_alumno(alumno_id)
@@ -441,9 +431,7 @@ class ReportService:
             workbook.close()
             output.seek(0)
             return output
-        except Exception as e:
-            print(f"[DEBUG EXCEL] ERROR INDIVIDUAL: {e}")
-            return None
+        except: return None
 
 # ==============================================================================
 # CAPA 4: VISTAS (FRONTEND)
@@ -552,36 +540,30 @@ def view_curso(page: ft.Page):
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
     
-    # --- EXPORTADOR DIRECTO (SIN FILE PICKER) ---
+    # --- EXPORTADOR DIRECTO (FIX) ---
     def download_excel(e):
-        # 1. Obtenemos fechas del diálogo
         start = export_range["start"]
         end = export_range["end"]
-        print(f"[DEBUG] Generando Excel para {cn} ({start} a {end})")
         
         try:
-            # 2. Generamos el archivo en memoria
             excel_data = ReportService.generate_excel_curso(cid, start, end)
             
             if excel_data:
-                # 3. Truco Mágico: Convertir a Base64 para descarga directa
+                # TRUCO: Descarga directa con Base64 para evitar error de FilePicker
                 b64_data = base64.b64encode(excel_data.getvalue()).decode()
-                filename = f"Reporte_{cn}_{start}_{end}.xlsx".replace(" ", "_")
+                filename = f"Reporte_{cn}_{start}_{end}.xlsx"
                 
-                # 4. Lanzamos la descarga en el navegador
-                page.launch_url(f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_data}", 
-                              web_window_name="_blank") # _blank ayuda a que no cierre la app
+                # Lanzar URL de datos
+                page.launch_url(f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_data}")
                 
                 page.close(dlg)
-                UIHelper.show_snack(page, "📥 Descarga iniciada checkea tus descargas.")
+                UIHelper.show_snack(page, "📥 Descarga iniciada (revisá tus descargas)")
             else:
-                UIHelper.show_snack(page, "Error: El reporte vino vacío.", True)
+                UIHelper.show_snack(page, "Error: El reporte está vacío.", True)
                 
         except Exception as ex:
-            print(f"❌ ERROR DESCARGA: {ex}")
             UIHelper.show_snack(page, f"Error: {ex}", True)
 
-    # Variables para el diálogo
     export_range = {"start": "", "end": ""}
     
     def open_export_dlg(e):
@@ -613,7 +595,7 @@ def view_curso(page: ft.Page):
         )
         page.open(dlg)
 
-    # --- REQUISITOS (Igual que antes) ---
+    # --- REQUISITOS (Docs) ---
     def open_reqs_dlg(e):
         tf_req = ft.TextField(label="Nuevo Requisito", expand=True)
         list_col = ft.Column(scroll="auto")
@@ -790,18 +772,24 @@ def view_student_detail(page: ft.Page):
     stats = AttendanceService.get_stats(aid)
     history = AttendanceService.get_history(aid)
     
-    # --- EXPORTAR INDIVIDUAL ---
-    file_picker = ft.FilePicker(on_result=lambda e: save_individual_result(e))
-    page.overlay.append(file_picker)
+    # --- EXPORTAR INDIVIDUAL (FIX) ---
     export_range_ind = {"start": "", "end": ""}
 
-    def save_individual_result(e):
-        if e.path:
-            excel_data = ReportService.generate_excel_alumno(aid, export_range_ind["start"], export_range_ind["end"])
+    def download_individual(e):
+        start = export_range_ind["start"]
+        end = export_range_ind["end"]
+        try:
+            excel_data = ReportService.generate_excel_alumno(aid, start, end)
             if excel_data:
-                with open(e.path, "wb") as f: f.write(excel_data.read())
-                UIHelper.show_snack(page, "Informe individual guardado.")
-            else: UIHelper.show_snack(page, "Error al generar.", True)
+                b64_data = base64.b64encode(excel_data.getvalue()).decode()
+                # Lanzar descarga directa
+                page.launch_url(f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_data}")
+                page.close(dlg)
+                UIHelper.show_snack(page, "📥 Informe individual descargado.")
+            else:
+                UIHelper.show_snack(page, "Error: Reporte vacío.", True)
+        except Exception as ex:
+            UIHelper.show_snack(page, f"Error: {ex}", True)
 
     def open_export_ind(e):
         today = date.today()
@@ -812,17 +800,15 @@ def view_student_detail(page: ft.Page):
         def confirm(e):
             export_range_ind["start"] = tf_start.value
             export_range_ind["end"] = tf_end.value
-            page.close(dlg)
-            file_picker.save_file(file_name=f"Informe_{alumno['nombre']}.xlsx")
+            download_individual(e)
             
-        # FIX VISUAL: Column para que no se rompa en mobile
         dlg = ft.AlertDialog(
             title=ft.Text("Exportar Historial"),
             content=ft.Container(
                 content=ft.Column([ft.Text("Período:"), tf_start, tf_end], tight=True),
                 width=300
             ),
-            actions=[ft.ElevatedButton("Descargar", on_click=confirm)]
+            actions=[ft.ElevatedButton("Descargar Ahora", on_click=confirm, bgcolor="green", color="white")]
         )
         page.open(dlg)
 
@@ -1010,6 +996,7 @@ if __name__ == "__main__":
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
     else:
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
+        
 # ==============================================================================
 # 🧨 ZONA DE LIMPIEZA V5 (REQUERIDO PARA ACTIVAR LOS NUEVOS CAMBIOS)
 # ==============================================================================
