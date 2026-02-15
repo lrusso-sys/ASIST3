@@ -2,27 +2,12 @@ import flet as ft
 import psycopg2
 import psycopg2.extras
 import hashlib
-from datetime import date, datetime
+from datetime import date
 import os
-import base64
-import io
 import threading
-import sys
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
 print("--- Oñepyrũ aplicación (Iniciando) ---", flush=True)
-
-try:
-    import pandas as pd
-except ImportError:
-    pd = None
-    print("⚠️ Pandas ndaipóri (no instalado).")
-
-try:
-    import xlsxwriter
-except ImportError:
-    xlsxwriter = None
-    print("⚠️ XlsxWriter ndaipóri (no instalado).")
 
 # --- CONFIGURACIÓN UI (Constantes) ---
 THEME = {
@@ -40,34 +25,6 @@ THEME = {
 # ==============================================================================
 # CAPA 1: UTILIDADES Y SEGURIDAD
 # ==============================================================================
-
-class Validator:
-    """Oñangareko validación rehe (Centraliza validaciones)."""
-    @staticmethod
-    def is_weekend(date_str: str) -> bool:
-        try:
-            d = date.fromisoformat(date_str)
-            return d.weekday() >= 5
-        except ValueError:
-            return False
-
-    @staticmethod
-    def is_future_date(date_str: str) -> bool:
-        try:
-            d = date.fromisoformat(date_str)
-            return d > date.today()
-        except ValueError:
-            return False
-    
-    @staticmethod
-    def is_valid_text(text: str, min_len: int = 1) -> bool:
-        return text is not None and len(text.strip()) >= min_len
-
-class Security:
-    """Seguridad ha hash (Criptografía)."""
-    @staticmethod
-    def hash_password(password: str) -> str:
-        return hashlib.sha256(password.encode()).hexdigest()
 
 class UIHelper:
     """Componentes visuales reutilizables."""
@@ -89,18 +46,12 @@ class UIHelper:
 
     @staticmethod
     def create_header(title, subtitle="", leading=None, actions=None):
-        # Manejo seguro del subtítulo: puede ser string o ft.Control
+        # Manejo seguro del subtítulo
         if isinstance(subtitle, str):
-            # Es un string, crear Text o Container vacío
-            if subtitle:
-                sub_control = ft.Text(subtitle, size=12, color="white70")
-            else:
-                sub_control = ft.Container()
+            sub_control = ft.Text(subtitle, size=12, color="white70") if subtitle else ft.Container()
         elif isinstance(subtitle, ft.Control):
-            # Ya es un control de Flet, usarlo directamente
             sub_control = subtitle
         else:
-            # Fallback por si acaso
             sub_control = ft.Container()
             
         return ft.Container(
@@ -119,12 +70,16 @@ class UIHelper:
             shadow=ft.BoxShadow(blur_radius=5, color="black12", offset=ft.Offset(0, 2))
         )
 
+class Security:
+    @staticmethod
+    def hash_password(password: str) -> str:
+        return hashlib.sha256(password.encode()).hexdigest()
+
 # ==============================================================================
-# CAPA 2: GESTIÓN DE BASE DE DATOS (PostgreSQL)
+# CAPA 2: GESTIÓN DE BASE DE DATOS (PostgreSQL - FIX)
 # ==============================================================================
 
 class DatabaseManager:
-    """Singleton para PostgreSQL."""
     _instance = None
     _lock = threading.Lock()
 
@@ -144,7 +99,7 @@ class DatabaseManager:
                     database_url = database_url.replace('postgres://', 'postgresql://', 1)
                 return psycopg2.connect(database_url, sslmode='require')
             else:
-                print("⚠️ Usando conexión local (sin DATABASE_URL)", flush=True)
+                # Fallback local
                 return psycopg2.connect(
                     host=os.environ.get('DB_HOST', 'localhost'),
                     port=os.environ.get('DB_PORT', '5432'),
@@ -165,7 +120,6 @@ class DatabaseManager:
                 cur.execute("CREATE TABLE IF NOT EXISTS Ciclos (id SERIAL PRIMARY KEY, nombre TEXT UNIQUE, activo INTEGER DEFAULT 0)")
                 cur.execute("CREATE TABLE IF NOT EXISTS Cursos (id SERIAL PRIMARY KEY, nombre TEXT, ciclo_id INTEGER REFERENCES Ciclos(id) ON DELETE CASCADE)")
                 
-                # Tabla Alumnos con soporte TPP (Trayectoria Pedagógica Personalizada)
                 cur.execute("""CREATE TABLE IF NOT EXISTS Alumnos (
                     id SERIAL PRIMARY KEY, 
                     curso_id INTEGER REFERENCES Cursos(id) ON DELETE CASCADE, 
@@ -180,27 +134,11 @@ class DatabaseManager:
                 )""")
                 
                 cur.execute("CREATE TABLE IF NOT EXISTS Asistencia (id SERIAL PRIMARY KEY, alumno_id INTEGER REFERENCES Alumnos(id) ON DELETE CASCADE, fecha TEXT, status TEXT, UNIQUE(alumno_id, fecha))")
-                cur.execute("CREATE TABLE IF NOT EXISTS Requisitos (id SERIAL PRIMARY KEY, curso_id INTEGER REFERENCES Cursos(id) ON DELETE CASCADE, descripcion TEXT)")
-                cur.execute("CREATE TABLE IF NOT EXISTS Requisitos_Cumplidos (requisito_id INTEGER REFERENCES Requisitos(id) ON DELETE CASCADE, alumno_id INTEGER REFERENCES Alumnos(id) ON DELETE CASCADE, PRIMARY KEY (requisito_id, alumno_id))")
-                
-                # Migraciones para TPP si la tabla ya existía
-                try: 
-                    cur.execute("ALTER TABLE Alumnos ADD COLUMN tpp INTEGER DEFAULT 0")
-                    conn.commit()
-                except: conn.rollback()
-                try: 
-                    cur.execute("ALTER TABLE Alumnos ADD COLUMN tpp_dias TEXT")
-                    conn.commit()
-                except: conn.rollback()
 
-                # Datos iniciales
+                # Admin por defecto
                 cur.execute("SELECT COUNT(*) FROM Usuarios")
                 if cur.fetchone()[0] == 0:
                     cur.execute("INSERT INTO Usuarios (username, password, role) VALUES (%s, %s, %s)", ("admin", Security.hash_password("admin"), "admin"))
-                
-                cur.execute("SELECT COUNT(*) FROM Ciclos")
-                if cur.fetchone()[0] == 0:
-                    cur.execute("INSERT INTO Ciclos (nombre, activo) VALUES (%s, 1)", (str(date.today().year),))
             conn.commit()
             print("✅ DB PostgreSQL Inicializada.")
         except Exception as e:
@@ -208,7 +146,6 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    # --- Helpers de Ejecución ---
     def fetch_all(self, query, params=()):
         conn = self.get_connection()
         if not conn: return []
@@ -217,7 +154,7 @@ class DatabaseManager:
                 cur.execute(query, params)
                 return [dict(row) for row in cur.fetchall()]
         except Exception as e:
-            print(f"Fetch All Error: {e}")
+            print(f"❌ Error Fetch All: {e} | Query: {query}")
             return []
         finally: conn.close()
 
@@ -229,7 +166,10 @@ class DatabaseManager:
                 cur.execute(query, params)
                 row = cur.fetchone()
                 return dict(row) if row else None
-        except: return None
+        except Exception as e:
+            # FIX: Imprimir el error real en lugar de silenciarlo
+            print(f"❌ Error Fetch One: {e} | Query: {query}")
+            return None
         finally: conn.close()
 
     def execute(self, query, params=()):
@@ -241,16 +181,15 @@ class DatabaseManager:
             conn.commit()
             return True
         except Exception as e:
-            print(f"Execute Error: {e}")
+            print(f"❌ Error Execute: {e} | Query: {query}")
             conn.rollback()
             return False
         finally: conn.close()
 
-# Instancia global
 db = DatabaseManager()
 
 # ==============================================================================
-# CAPA 3: SERVICIOS DE NEGOCIO (Controladores)
+# CAPA 3: SERVICIOS DE NEGOCIO
 # ==============================================================================
 
 class UserService:
@@ -268,23 +207,23 @@ class UserService:
     def delete_user(uid): return db.execute("DELETE FROM Usuarios WHERE id = %s", (uid,))
 
 class SchoolService:
-    # --- CICLOS LECTIVOS (Fix) ---
     @staticmethod
     def get_ciclos(): return db.fetch_all("SELECT * FROM Ciclos ORDER BY nombre DESC")
+    
     @staticmethod
-    def get_ciclo_activo(): return db.fetch_one("SELECT * FROM Ciclos WHERE activo = 1")
+    def get_ciclo_activo(): 
+        # FIX: Query simplificada y segura
+        return db.fetch_one("SELECT * FROM Ciclos WHERE activo = 1 LIMIT 1")
     
     @staticmethod
     def add_ciclo(nombre):
-        # Desactivar todos, crear nuevo activo
         conn = db.get_connection()
         try:
             with conn.cursor() as cur:
                 cur.execute("UPDATE Ciclos SET activo = 0")
                 cur.execute("INSERT INTO Ciclos (nombre, activo) VALUES (%s, 1)", (nombre,))
             conn.commit(); return True
-        except: 
-            conn.rollback(); return False
+        except: conn.rollback(); return False
         finally: conn.close()
 
     @staticmethod
@@ -293,14 +232,18 @@ class SchoolService:
         try:
             with conn.cursor() as cur:
                 cur.execute("UPDATE Ciclos SET activo = 0")
-                cur.execute("UPDATE Ciclos SET activo = 1 WHERE id = %s", (cid,))
+                # FIX: Convertir a int explícitamente
+                cur.execute("UPDATE Ciclos SET activo = 1 WHERE id = %s", (int(cid),))
             conn.commit()
+            print(f"Ciclo {cid} activado.")
+        except Exception as e:
+            print(f"Error activando ciclo: {e}")
+            conn.rollback()
         finally: conn.close()
     
     @staticmethod
     def delete_ciclo(cid): return db.execute("DELETE FROM Ciclos WHERE id = %s", (cid,))
 
-    # --- CURSOS Y ALUMNOS ---
     @staticmethod
     def get_cursos_activos():
         ciclo = SchoolService.get_ciclo_activo()
@@ -321,21 +264,8 @@ class SchoolService:
         """, (aid,))
 
     @staticmethod
-    def search_alumnos(term):
-        term = f"%{term}%"
-        return db.fetch_all("""
-            SELECT a.*, c.nombre as curso_nombre, ci.nombre as ciclo_nombre 
-            FROM Alumnos a 
-            JOIN Cursos c ON a.curso_id = c.id 
-            JOIN Ciclos ci ON c.ciclo_id = ci.id
-            WHERE (a.nombre ILIKE %s OR a.dni ILIKE %s) AND ci.activo = 1
-            ORDER BY a.nombre
-        """, (term, term))
-
-    @staticmethod
-    def add_curso(nombre, ciclo_id): return db.execute("INSERT INTO Cursos (nombre, ciclo_id) VALUES (%s, %s)", (nombre, ciclo_id))
-    @staticmethod
-    def delete_curso(cid): return db.execute("DELETE FROM Cursos WHERE id = %s", (cid,))
+    def add_curso(nombre, ciclo_id): 
+        return db.execute("INSERT INTO Cursos (nombre, ciclo_id) VALUES (%s, %s)", (nombre, ciclo_id))
     
     @staticmethod
     def add_alumno(data):
@@ -346,9 +276,6 @@ class SchoolService:
     def update_alumno(aid, data):
         return db.execute("UPDATE Alumnos SET nombre=%s, dni=%s, observaciones=%s, tutor_nombre=%s, tutor_telefono=%s, tpp=%s, tpp_dias=%s WHERE id=%s", 
                           (data['nombre'], data['dni'], data['obs'], data['tn'], data['tt'], data['tpp'], data['tpp_dias'], aid))
-    
-    @staticmethod
-    def delete_alumno(aid): return db.execute("DELETE FROM Alumnos WHERE id = %s", (aid,))
 
 class AttendanceService:
     @staticmethod
@@ -367,7 +294,6 @@ class AttendanceService:
         c = {k: 0 for k in ['P','T','A','J','S','N']}
         for r in rows:
             if r['status'] in c: c[r['status']] += 1
-            
         faltas = c['A'] + c['S'] + (c['T'] * 0.25)
         total = sum(c[k] for k in ['P','T','A','J','S'])
         pct = (faltas / total * 100) if total > 0 else 0
@@ -376,30 +302,6 @@ class AttendanceService:
     @staticmethod
     def get_history(aid):
         return db.fetch_all("SELECT fecha, status FROM Asistencia WHERE alumno_id = %s ORDER BY fecha DESC", (aid,))
-
-    @staticmethod
-    def get_report_matrix(curso_id, start, end):
-        alumnos = SchoolService.get_alumnos(curso_id)
-        raw_data = db.fetch_all("SELECT alumno_id, status FROM Asistencia WHERE fecha >= %s AND fecha <= %s AND alumno_id IN (SELECT id FROM Alumnos WHERE curso_id=%s)", (start, end, curso_id))
-        
-        map_asis = {}
-        for r in raw_data:
-            if r['alumno_id'] not in map_asis: map_asis[r['alumno_id']] = []
-            map_asis[r['alumno_id']].append(r['status'])
-            
-        report = []
-        for a in alumnos:
-            sts = map_asis.get(a['id'], [])
-            c = {k: sts.count(k) for k in ['P','T','A','J','S','N']}
-            faltas = c['A'] + c['S'] + (c['T'] * 0.25)
-            total = sum(c[k] for k in ['P','T','A','J','S'])
-            pct = (faltas / total * 100) if total > 0 else 0
-            
-            report.append({
-                **a, 'p': c['P'], 't': c['T'], 'a': c['A'], 'j': c['J'], 's': c['S'],
-                'faltas': faltas, 'pct': round(pct, 1)
-            })
-        return report
 
 # ==============================================================================
 # CAPA 4: VISTAS (FRONTEND)
@@ -429,8 +331,6 @@ def view_login(page: ft.Page):
                     user_tf, ft.Container(height=10), pass_tf, ft.Container(height=20),
                     ft.ElevatedButton("INGRESAR", on_click=login, width=300, height=50, bgcolor=THEME["primary"], color="white")
                 ], horizontal_alignment="center"), padding=40),
-                ft.Container(height=20),
-                ft.Text("Admin: admin / admin", size=12, color="grey")
             ], horizontal_alignment="center"),
             alignment=ft.alignment.center, expand=True, bgcolor=THEME["bg"]
         )
@@ -440,21 +340,18 @@ def view_dashboard(page: ft.Page):
     user = page.session.get("user")
     if not user: return view_login(page)
     
-    # Texto dinámico para el ciclo
     txt_ciclo = ft.Text("Cargando...", weight="bold", color="white")
-    
-    search_tf = ft.TextField(hint_text="Buscar alumno...", expand=True, bgcolor="white", border_radius=20, border_color="transparent")
     grid = ft.GridView(runs_count=2, max_extent=400, child_aspect_ratio=2.5, spacing=15, run_spacing=15)
     
     def load():
-        # Consulta explícita del ciclo al cargar el dashboard
+        # Consultar ciclo activo
         ciclo = SchoolService.get_ciclo_activo()
         grid.controls.clear()
         
         if not ciclo:
             txt_ciclo.value = "⚠️ SIN CICLO ACTIVO"
-            txt_ciclo.color = "#FFCDD2" # Rojo claro
-            grid.controls.append(ft.Text("No hay ciclo lectivo activo. Ve a Configuración.", italic=True, color="red"))
+            txt_ciclo.color = "#FFCDD2"
+            grid.controls.append(ft.Text("No hay ciclo lectivo activo. Ve a Configuración (Tuerca).", italic=True, color="red", size=16))
         else:
             txt_ciclo.value = f"Ciclo: {ciclo['nombre']}"
             txt_ciclo.color = "white"
@@ -476,13 +373,10 @@ def view_dashboard(page: ft.Page):
                         ft.IconButton("arrow_forward_ios", icon_color=THEME["primary"], on_click=go)
                     ], alignment="spaceBetween"), padding=15, on_click=go
                 ))
-        page.update()
-    
-    def search(e):
-        if search_tf.value: page.session.set("search_term", search_tf.value); page.route = "/search"; page.update()
-    search_tf.on_submit = search
+        # FIX: NO llamamos a page.update() aquí. Dejamos que el router pinte la vista.
 
-    load() # Carga inicial
+    # Ejecutar carga
+    load()
 
     actions = [ft.IconButton("logout", icon_color="white", on_click=lambda _: page.go("/"))]
     if user['role'] == 'admin': 
@@ -492,16 +386,23 @@ def view_dashboard(page: ft.Page):
     if user['role'] == "admin":
         def add_curso_dlg(e):
             ciclo_actual = SchoolService.get_ciclo_activo()
-            if not ciclo_actual: return UIHelper.show_snack(page, "Debe activar un ciclo primero", True)
+            if not ciclo_actual: 
+                page.close(dlg) # Cerrar dialogo si estaba abierto
+                return UIHelper.show_snack(page, "Debe activar un ciclo primero", True)
             
-            tf = ft.TextField(label="Nombre")
-            def save(e):
-                if tf.value:
-                    if SchoolService.add_curso(tf.value, ciclo_actual['id']):
-                        page.close(dlg); load()
-                    else: UIHelper.show_snack(page, "Error al crear (¿Nombre duplicado?)", True)
+            tf_nombre = ft.TextField(label="Nombre del Curso")
             
-            dlg = ft.AlertDialog(title=ft.Text("Nuevo Curso"), content=tf, actions=[ft.TextButton("Guardar", on_click=save)])
+            def save_curso(e):
+                if tf_nombre.value:
+                    if SchoolService.add_curso(tf_nombre.value, ciclo_actual['id']):
+                        page.close(dlg)
+                        load()
+                        page.update() # Aquí sí actualizamos porque es un evento de usuario
+                        UIHelper.show_snack(page, "Curso creado")
+                    else: 
+                        UIHelper.show_snack(page, "Error al crear", True)
+            
+            dlg = ft.AlertDialog(title=ft.Text("Nuevo Curso"), content=tf_nombre, actions=[ft.TextButton("Guardar", on_click=save_curso)])
             page.open(dlg)
             
         fab = ft.FloatingActionButton(icon="add", on_click=add_curso_dlg, bgcolor=THEME["primary"])
@@ -509,7 +410,6 @@ def view_dashboard(page: ft.Page):
     return ft.View("/dashboard", [
         UIHelper.create_header("Panel Principal", subtitle=txt_ciclo, actions=actions),
         ft.Container(content=ft.Column([
-            ft.Container(content=search_tf, padding=ft.padding.only(bottom=20)),
             ft.Text("Mis Cursos", size=22, weight="bold"),
             ft.Divider(height=10, color="transparent"),
             grid
@@ -520,18 +420,14 @@ def view_curso(page: ft.Page):
     cid = page.session.get("curso_id")
     if not cid: return view_dashboard(page)
     
-    # --- TABS ---
     lv = ft.Column(scroll="auto", expand=True)
     def load_alumnos():
         lv.controls.clear()
         for a in SchoolService.get_alumnos(cid):
             def det(e, aid=a['id']): page.session.set("alumno_id", aid); page.go("/student_detail")
             def edt(e, aid=a['id']): page.session.set("alumno_id_edit", aid); page.go("/form_student")
-            
-            # Subtítulo con TPP
             sub = f"DNI: {a['dni'] or '-'}"
             if a['tpp'] == 1: sub += " | ⚠️ TPP"
-
             lv.controls.append(UIHelper.create_card(ft.ListTile(
                 leading=ft.CircleAvatar(content=ft.Text(a['nombre'][0]), bgcolor=THEME["secondary"], color="white"),
                 title=ft.Text(a['nombre'], weight="bold"),
@@ -546,8 +442,6 @@ def view_curso(page: ft.Page):
     
     def load_asist(e=None):
         asist_col.controls.clear()
-        
-        # Validación TPP y Fines de Semana
         try:
             d_obj = date.fromisoformat(date_tf.value)
             dia_sem = d_obj.weekday()
@@ -556,14 +450,12 @@ def view_curso(page: ft.Page):
 
         status_map = AttendanceService.get_day_status(cid, date_tf.value)
         for a in SchoolService.get_alumnos(cid):
-            # Lógica TPP pre-fill
             def_val = "P"
             if a['tpp'] == 1 and a['tpp_dias']:
                 if str(dia_sem) not in a['tpp_dias'].split(','):
-                    def_val = "N" # No corresponde
+                    def_val = "N"
             
             val = status_map.get(a['id'], def_val)
-            
             dd = ft.Dropdown(
                 width=100, height=40, text_size=14, value=val,
                 options=[ft.dropdown.Option(x) for x in ["P","T","A","J","N"]],
@@ -572,14 +464,10 @@ def view_curso(page: ft.Page):
             asist_col.controls.append(ft.Container(content=ft.Row([ft.Text(a['nombre'], expand=True, weight="w500"), dd]), padding=5, border=ft.border.only(bottom=ft.border.BorderSide(1, "grey200"))))
         page.update()
 
-    # (Reporte simplificado para brevedad)
-    
     tabs = ft.Tabs(selected_index=0, tabs=[
         ft.Tab(text="Alumnos", icon="people", content=ft.Container(content=lv, padding=10)),
-        ft.Tab(text="Asistencia", icon="check_circle", content=ft.Container(content=ft.Column([ft.Row([date_tf, ft.IconButton("refresh", on_click=load_asistencia_ui)]), ft.Divider(), asist_col]), padding=10))
+        ft.Tab(text="Asistencia", icon="check_circle", content=ft.Container(content=ft.Column([ft.Row([date_tf, ft.IconButton("refresh", on_click=load_asist)]), ft.Divider(), asist_col]), padding=10))
     ], expand=True, on_change=lambda e: (load_alumnos() if e.control.selected_index==0 else load_asist()))
-
-    def load_asistencia_ui(e): load_asist(e)
 
     load_alumnos()
     return ft.View("/curso", [
@@ -592,26 +480,24 @@ def view_form_student(page: ft.Page):
     cid = page.session.get("curso_id"); aid = page.session.get("alumno_id_edit"); is_edit = aid is not None
     nm = ft.TextField(label="Nombre"); dn = ft.TextField(label="DNI"); tn = ft.TextField(label="Tutor"); tt = ft.TextField(label="Tel. Tutor"); ob = ft.TextField(label="Observaciones", multiline=True)
     
-    # TPP Controls
     sw_tpp = ft.Switch(label="Activar Trayectoria (TPP)", value=False)
     checks = [ft.Checkbox(label=d, value=True, data=str(i)) for i, d in enumerate(["Lun","Mar","Mié","Jue","Vie"])]
     cont_days = ft.Column([ft.Text("Días Asistencia:")] + checks, visible=False)
-    
     sw_tpp.on_change = lambda e: (setattr(cont_days, 'visible', sw_tpp.value), page.update())
 
     if is_edit:
         d = SchoolService.get_alumno(aid)
-        nm.value=d['nombre']; dn.value=d['dni']; tn.value=d['tutor_nombre']; tt.value=d['tutor_telefono']; ob.value=d['observaciones']
-        if d['tpp'] == 1:
-            sw_tpp.value = True; cont_days.visible = True
-            sd = (d['tpp_dias'] or "").split(',')
-            for c in checks: c.value = c.data in sd
+        if d:
+            nm.value=d['nombre']; dn.value=d['dni']; tn.value=d['tutor_nombre']; tt.value=d['tutor_telefono']; ob.value=d['observaciones']
+            if d['tpp'] == 1:
+                sw_tpp.value = True; cont_days.visible = True
+                sd = (d['tpp_dias'] or "").split(',')
+                for c in checks: c.value = c.data in sd
 
     def save(e):
         if not nm.value: return UIHelper.show_snack(page, "Nombre obligatorio", True)
         tpp_days = ",".join([c.data for c in checks if c.value]) if sw_tpp.value else ""
         data = {'curso_id': cid, 'nombre': nm.value, 'dni': dn.value, 'tn': tn.value, 'tt': tt.value, 'obs': ob.value, 'tpp': 1 if sw_tpp.value else 0, 'tpp_dias': tpp_days}
-        
         if is_edit: SchoolService.update_alumno(aid, data)
         else: SchoolService.add_alumno(data)
         page.go("/curso")
@@ -628,91 +514,43 @@ def view_form_student(page: ft.Page):
 
 def view_student_detail(page: ft.Page):
     aid = page.session.get("alumno_id")
-    if not aid: 
-        return view_dashboard(page)
-    
+    if not aid: return view_dashboard(page)
     alumno = SchoolService.get_alumno(aid)
-    if not alumno:
-        UIHelper.show_snack(page, "Alumno no encontrado", True)
-        return view_dashboard(page)
+    if not alumno: return view_dashboard(page)
     
-    # Estadísticas
     stats = AttendanceService.get_stats(aid)
     history = AttendanceService.get_history(aid)
     
-    # Controles UI
     info_col = ft.Column([
         ft.Text(f"Nombre: {alumno['nombre']}", size=18, weight="bold"),
-        ft.Text(f"DNI: {alumno['dni'] or 'No especificado'}"),
-        ft.Text(f"Curso: {alumno['curso_nombre']}"),
-        ft.Text(f"Ciclo: {alumno['ciclo_nombre']}"),
+        ft.Text(f"DNI: {alumno['dni'] or '-'}"),
+        ft.Text(f"Curso: {alumno['curso_nombre']} | Ciclo: {alumno['ciclo_nombre']}"),
         ft.Divider(),
-        ft.Text("Contacto", weight="bold"),
-        ft.Text(f"Tutor: {alumno['tutor_nombre'] or '-'}"),
-        ft.Text(f"Teléfono: {alumno['tutor_telefono'] or '-'}"),
+        ft.Text(f"Tutor: {alumno['tutor_nombre'] or '-'} | Tel: {alumno['tutor_telefono'] or '-'}"),
     ])
     
-    if alumno['observaciones']:
-        info_col.controls.append(ft.Divider())
-        info_col.controls.append(ft.Text("Observaciones:", weight="bold"))
-        info_col.controls.append(ft.Text(alumno['observaciones'], italic=True))
-    
-    # Stats cards
     stats_row = ft.Row([
-        UIHelper.create_card(ft.Column([ft.Text("Presente", size=12), ft.Text(str(stats['p']), size=24, weight="bold", color="green")], alignment="center"), padding=10),
-        UIHelper.create_card(ft.Column([ft.Text("Tarde", size=12), ft.Text(str(stats['t']), size=24, weight="bold", color="orange")], alignment="center"), padding=10),
-        UIHelper.create_card(ft.Column([ft.Text("Ausente", size=12), ft.Text(str(stats['a']), size=24, weight="bold", color="red")], alignment="center"), padding=10),
-        UIHelper.create_card(ft.Column([ft.Text("Faltas Eq.", size=12), ft.Text(str(stats['faltas']), size=24, weight="bold", color="indigo")], alignment="center"), padding=10),
+        UIHelper.create_card(ft.Column([ft.Text("P", size=12), ft.Text(str(stats['p']), size=24, color="green")]), padding=10),
+        UIHelper.create_card(ft.Column([ft.Text("A", size=12), ft.Text(str(stats['a']), size=24, color="red")]), padding=10),
+        UIHelper.create_card(ft.Column([ft.Text("Faltas", size=12), ft.Text(str(stats['faltas']), size=24, color="indigo")]), padding=10),
     ], spacing=10)
     
-    # Historial reciente (últimos 10)
-    hist_col = ft.Column([
-        ft.Text(f"{h['fecha']}: {h['status']}", size=12) 
-        for h in history[:10]
-    ], scroll="auto", height=200)
+    hist_col = ft.Column([ft.Text(f"{h['fecha']}: {h['status']}", size=12) for h in history[:10]], scroll="auto", height=200)
     
     return ft.View("/student_detail", [
-        UIHelper.create_header(
-            alumno['nombre'], 
-            f"{alumno['curso_nombre']} - {alumno['ciclo_nombre']}",
-            leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso"))
-        ),
-        ft.Container(content=ft.Column([
-            stats_row,
-            ft.Divider(),
-            ft.Tabs(tabs=[
-                ft.Tab(text="Información", content=ft.Container(content=info_col, padding=20)),
-                ft.Tab(text="Historial Asistencia", content=ft.Container(content=hist_col, padding=20))
-            ])
-        ]), padding=20, bgcolor=THEME["bg"], expand=True)
+        UIHelper.create_header(alumno['nombre'], "Detalle", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso"))),
+        ft.Container(content=ft.Column([stats_row, ft.Divider(), ft.Tabs(tabs=[
+            ft.Tab(text="Info", content=ft.Container(content=info_col, padding=20)),
+            ft.Tab(text="Historial", content=ft.Container(content=hist_col, padding=20))
+        ])]), padding=20, bgcolor=THEME["bg"], expand=True)
     ])
 
 def view_admin(page: ft.Page):
-    user = page.session.get("user")
-    if not user or user['role'] != 'admin':
-        return view_dashboard(page)
-    
     return ft.View("/admin", [
-        UIHelper.create_header(
-            "Administración",
-            "Configuración del Sistema",
-            leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard"))
-        ),
+        UIHelper.create_header("Administración", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard"))),
         ft.Container(content=ft.Column([
-            UIHelper.create_card(ft.ListTile(
-                leading=ft.Icon("calendar_month", color=THEME["primary"]),
-                title=ft.Text("Ciclos Lectivos", weight="bold"),
-                subtitle=ft.Text("Gestionar años escolares"),
-                trailing=ft.Icon("chevron_right"),
-                on_click=lambda _: page.go("/ciclos")
-            )),
-            UIHelper.create_card(ft.ListTile(
-                leading=ft.Icon("people", color=THEME["primary"]),
-                title=ft.Text("Usuarios", weight="bold"),
-                subtitle=ft.Text("Gestionar preceptores y administradores"),
-                trailing=ft.Icon("chevron_right"),
-                on_click=lambda _: page.go("/users")
-            ))
+            UIHelper.create_card(ft.ListTile(leading=ft.Icon("calendar_month", color=THEME["primary"]), title=ft.Text("Ciclos Lectivos"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/ciclos"))),
+            UIHelper.create_card(ft.ListTile(leading=ft.Icon("people", color=THEME["primary"]), title=ft.Text("Usuarios"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/users")))
         ]), padding=20, bgcolor=THEME["bg"], expand=True)
     ])
 
@@ -724,20 +562,23 @@ def view_ciclos(page: ft.Page):
         col.controls.clear()
         for c in SchoolService.get_ciclos():
             is_active = c['activo'] == 1
-            act_btn = ft.Container(content=ft.Text("ACTIVO", color="white", size=12, weight="bold"), bgcolor="green", padding=5, border_radius=5) if is_active else ft.ElevatedButton("Activar", on_click=lambda e, cid=c['id']: (SchoolService.activar_ciclo(cid), load(), UIHelper.show_snack(page, "Ciclo Activado")))
+            # Botón Activar
+            if is_active:
+                act_btn = ft.Container(content=ft.Text("ACTIVO", color="white", size=10, weight="bold"), bgcolor="green", padding=5, border_radius=5)
+            else:
+                act_btn = ft.ElevatedButton("Activar", on_click=lambda e, cid=c['id']: (SchoolService.activar_ciclo(cid), load(), page.update()))
             
-            del_btn = ft.IconButton("delete", icon_color="red", on_click=lambda e, cid=c['id']: (SchoolService.delete_ciclo(cid), load()))
+            del_btn = ft.IconButton("delete", icon_color="red", on_click=lambda e, cid=c['id']: (SchoolService.delete_ciclo(cid), load(), page.update()))
             
             col.controls.append(UIHelper.create_card(ft.ListTile(
                 leading=ft.Icon("check_circle" if is_active else "circle_outlined", color="green" if is_active else "grey"),
                 title=ft.Text(c['nombre'], weight="bold"),
                 trailing=ft.Row([act_btn, del_btn], tight=True)
             ), padding=5))
-        page.update()
     
     def add(e):
         if tf.value:
-            if SchoolService.add_ciclo(tf.value): tf.value=""; load()
+            if SchoolService.add_ciclo(tf.value): tf.value=""; load(); page.update()
             else: UIHelper.show_snack(page, "Error: ¿Ya existe?", True)
             
     load()
@@ -756,16 +597,13 @@ def view_users(page: ft.Page):
     def load():
         col.controls.clear()
         for us in UserService.get_users():
-            dele = ft.IconButton("delete", icon_color="red", on_click=lambda e, uid=us['id']: (UserService.delete_user(uid), load())) if us['username'] != page.session.get("user")['username'] else None
-            col.controls.append(UIHelper.create_card(ft.ListTile(
-                leading=ft.Icon("person", color=THEME["primary"]), title=ft.Text(us['username'], weight="bold"), subtitle=ft.Text(us['role']), trailing=dele
-            ), padding=5))
-        page.update()
+            dele = ft.IconButton("delete", icon_color="red", on_click=lambda e, uid=us['id']: (UserService.delete_user(uid), load(), page.update())) if us['username'] != page.session.get("user")['username'] else None
+            col.controls.append(UIHelper.create_card(ft.ListTile(leading=ft.Icon("person"), title=ft.Text(us['username']), subtitle=ft.Text(us['role']), trailing=dele), padding=5))
 
     def add(e):
         if u.value and p.value:
             UserService.add_user(u.value, p.value, r.value)
-            u.value = ""; p.value = ""; load()
+            u.value = ""; p.value = ""; load(); page.update()
 
     load()
     return ft.View("/users", [
@@ -798,6 +636,7 @@ def main(page: ft.Page):
 
     def route_change(route):
         page.views.clear()
+        # Protección de rutas
         if page.route != "/" and not page.session.get("user"):
             page.route = "/"
         
