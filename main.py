@@ -188,6 +188,49 @@ class DatabaseManager:
 
 db = DatabaseManager()
 
+# ==============================================================================
+# 🧨 ZONA DE LIMPIEZA (SOLO PARA ARREGLAR LA DB)
+# ==============================================================================
+print("--- 🧹 INICIANDO LIMPIEZA PROFUNDA DE BASE DE DATOS ---")
+try:
+    # Obtenemos conexión directa para tareas administrativas
+    conn_fix = db.get_connection()
+    if conn_fix:
+        with conn_fix.cursor() as cur:
+            # 1. Borramos TODAS las tablas existentes (CASCADE elimina las relaciones)
+            cur.execute("DROP TABLE IF EXISTS Asistencia CASCADE")
+            cur.execute("DROP TABLE IF EXISTS Alumnos CASCADE") 
+            cur.execute("DROP TABLE IF EXISTS Cursos CASCADE")
+            cur.execute("DROP TABLE IF EXISTS Ciclos CASCADE")
+            cur.execute("DROP TABLE IF EXISTS Requisitos_Cumplidos CASCADE")
+            cur.execute("DROP TABLE IF EXISTS Requisitos CASCADE")
+            # Opcional: Borrar usuarios si querés reiniciar el admin
+            # cur.execute("DROP TABLE IF EXISTS Usuarios CASCADE") 
+            
+            conn_fix.commit()
+        conn_fix.close()
+        print("✅ TABLAS BORRADAS CORRECTAMENTE.")
+        
+        # 2. Forzamos a crear las tablas nuevas con la estructura CORRECTA
+        print("🔨 RE-CREANDO ESTRUCTURA...")
+        db._init_db_structure()
+        
+        # 3. Creamos el ciclo 2026 y lo activamos automáticamente para que no reniegues
+        conn_fix = db.get_connection()
+        with conn_fix.cursor() as cur:
+            # Verificamos si ya se creó el ciclo en el init (a veces pasa)
+            cur.execute("SELECT count(*) FROM Ciclos WHERE nombre='2026'")
+            if cur.fetchone()[0] == 0:
+                cur.execute("INSERT INTO Ciclos (nombre, activo) VALUES ('2026', 1)")
+                conn_fix.commit()
+                print("✨ CICLO 2026 CREADO Y ACTIVADO MÁGICAMENTE.")
+        conn_fix.close()
+        
+    else:
+        print("❌ NO SE PUDO CONECTAR PARA LIMPIAR.")
+except Exception as e:
+    print(f"❌ ERROR EN LIMPIEZA: {e}")
+print("=================================================================")
 
 # --- BLOQUE DE DIAGNÓSTICO TEMPORAL ---
 # Pega esto justo debajo de: db = DatabaseManager()
