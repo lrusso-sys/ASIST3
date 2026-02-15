@@ -516,18 +516,27 @@ def view_curso(page: ft.Page):
         file_picker.save_file(file_name=fname)
 
     # --- Gestor de Requisitos (Docs) ---
+# --- Gestor de Requisitos (Docs) MEJORADO ---
     def open_reqs_dlg(e):
-        tf_req = ft.TextField(label="Nuevo Requisito (ej: Ficha Médica)")
-        list_col = ft.Column()
+        # Habilitamos on_submit para que funcione el ENTER
+        tf_req = ft.TextField(label="Nuevo Requisito (ej: Ficha Médica)", expand=True)
+        list_col = ft.Column(scroll="auto")
         
         def load_reqs_local():
             list_col.controls.clear()
             reqs = DocService.get_requisitos_curso(cid)
-            if not reqs: list_col.controls.append(ft.Text("Sin requisitos.", italic=True, size=12))
+            if not reqs: 
+                list_col.controls.append(ft.Text("Sin requisitos. Agregá uno arriba.", italic=True, size=12, color="grey"))
+            
             for r in reqs:
-                list_col.controls.append(ft.ListTile(
-                    title=ft.Text(r['descripcion'], size=14),
-                    trailing=ft.IconButton("delete", icon_color="red", icon_size=20, on_click=lambda e, rid=r['id']: (DocService.delete_requisito(rid), load_reqs_local(), page.update()))
+                list_col.controls.append(ft.Container(
+                    content=ft.Row([
+                        ft.Icon("check_circle", color="green", size=16),
+                        ft.Text(r['descripcion'], size=14, expand=True),
+                        ft.IconButton("delete", icon_color="red", icon_size=20, tooltip="Borrar", 
+                                    on_click=lambda e, rid=r['id']: (DocService.delete_requisito(rid), load_reqs_local(), page.update()))
+                    ], alignment="spaceBetween"),
+                    bgcolor="grey100", padding=5, border_radius=5
                 ))
             page.update()
 
@@ -536,17 +545,29 @@ def view_curso(page: ft.Page):
                 DocService.add_requisito(cid, tf_req.value)
                 tf_req.value = ""
                 load_reqs_local()
+                tf_req.focus() # Mantiene el cursor ahí para seguir cargando rápido
+            else:
+                tf_req.error_text = "Escribí algo primero"
+                page.update()
+
+        # Vinculamos el ENTER al guardado
+        tf_req.on_submit = add_req_local
         
         load_reqs_local()
+        
         dlg = ft.AlertDialog(
             title=ft.Text("Documentación del Curso"),
             content=ft.Container(content=ft.Column([
-                ft.Row([tf_req, ft.IconButton("add", icon_color="green", on_click=add_req_local)]),
+                ft.Text("Escribí el requisito y tocá Enter o Agregar:", size=12, color="grey"),
+                ft.Row([
+                    tf_req, 
+                    ft.ElevatedButton("Agregar", on_click=add_req_local, bgcolor="green", color="white")
+                ]),
                 ft.Divider(),
-                ft.Text("Lista de pedidos:", weight="bold", size=12),
-                ft.Container(content=list_col, height=200) # Scroll limitado
-            ], width=300), height=300),
-            actions=[ft.TextButton("Cerrar", on_click=lambda e: page.close(dlg))]
+                ft.Text("Lista actual (Se guarda automático):", weight="bold", size=12),
+                ft.Container(content=list_col, height=200, border=ft.border.all(1, "grey200"), border_radius=5, padding=5) 
+            ], width=400), height=400),
+            actions=[ft.TextButton("Listo (Cerrar)", on_click=lambda e: page.close(dlg))]
         )
         page.open(dlg)
 
