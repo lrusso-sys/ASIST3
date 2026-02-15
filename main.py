@@ -6,10 +6,9 @@ from datetime import date, datetime
 import os
 import threading
 import io
-import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v5.0 (Excel + Docs por Curso) ---", flush=True)
+print("--- Oñepyrũ aplicación v6.0 (Legajo Unificado) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -27,6 +26,7 @@ THEME = {
     "danger": "red",
     "success": "green",
     "warning": "orange",
+    "info": "blue",
     "text": "bluegrey900"
 }
 
@@ -43,23 +43,18 @@ class UIHelper:
         page.update()
 
     @staticmethod
-    def create_card(content, padding=20, on_click=None):
+    def create_card(content, padding=20, on_click=None, expand=False):
         return ft.Container(
             content=content, padding=padding, bgcolor=THEME["card"], border_radius=12,
             shadow=ft.BoxShadow(blur_radius=10, color="black12", offset=ft.Offset(0, 4)),
             margin=ft.margin.only(bottom=10), on_click=on_click,
-            animate=ft.animation.Animation(200, "easeOut")
+            animate=ft.animation.Animation(200, "easeOut"),
+            expand=expand
         )
 
     @staticmethod
     def create_header(title, subtitle="", leading=None, actions=None):
-        if isinstance(subtitle, str):
-            sub_control = ft.Text(subtitle, size=12, color="white70") if subtitle else ft.Container()
-        elif isinstance(subtitle, ft.Control):
-            sub_control = subtitle
-        else:
-            sub_control = ft.Container()
-            
+        sub_control = ft.Text(subtitle, size=12, color="white70") if isinstance(subtitle, str) and subtitle else (subtitle if isinstance(subtitle, ft.Control) else ft.Container())
         return ft.Container(
             content=ft.Row([
                 ft.Row([
@@ -136,8 +131,6 @@ class DatabaseManager:
                 )""")
                 
                 cur.execute("CREATE TABLE IF NOT EXISTS Asistencia (id SERIAL PRIMARY KEY, alumno_id INTEGER REFERENCES Alumnos(id) ON DELETE CASCADE, fecha TEXT, status TEXT, UNIQUE(alumno_id, fecha))")
-
-                # MODIFICADO: Requisitos ahora dependen del CURSO
                 cur.execute("CREATE TABLE IF NOT EXISTS Requisitos (id SERIAL PRIMARY KEY, curso_id INTEGER REFERENCES Cursos(id) ON DELETE CASCADE, descripcion TEXT)")
                 cur.execute("CREATE TABLE IF NOT EXISTS Documentacion_Alumno (requisito_id INTEGER REFERENCES Requisitos(id) ON DELETE CASCADE, alumno_id INTEGER REFERENCES Alumnos(id) ON DELETE CASCADE, entregado INTEGER DEFAULT 0, PRIMARY KEY (requisito_id, alumno_id))")
 
@@ -296,7 +289,6 @@ class SchoolService:
 class DocService:
     @staticmethod
     def get_requisitos_curso(curso_id):
-        # AHORA filtra por curso
         return db.fetch_all("SELECT * FROM Requisitos WHERE curso_id = %s ORDER BY descripcion", (curso_id,))
     
     @staticmethod
@@ -331,14 +323,23 @@ class AttendanceService:
 
     @staticmethod
     def get_stats(aid):
+        # AHORA INCLUYE S (Suspensión) y J (Justificada)
         rows = db.fetch_all("SELECT status FROM Asistencia WHERE alumno_id = %s", (aid,))
         c = {k: 0 for k in ['P','T','A','J','S','N']}
         for r in rows:
             if r['status'] in c: c[r['status']] += 1
-        faltas = c['A'] + c['S'] + (c['T'] * 0.25)
+        
+        # Cálculo de faltas (media falta por tarde, etc. Ajustar según reglamento)
+        # S (Suspensión) suele contar como falta completa o no, depende la escuela. Acá la cuento como falta.
+        faltas = c['A'] + c['S'] + (c['T'] * 0.5) # Ejemplo: Tarde es media falta
+        
         total = sum(c[k] for k in ['P','T','A','J','S'])
-        pct = (faltas / total * 100) if total > 0 else 0
-        return {'p': c['P'], 'a': c['A'], 't': c['T'], 'faltas': faltas, 'pct': round(pct, 1), 'total': total}
+        pct = (1 - (faltas / total)) * 100 if total > 0 else 100
+        
+        return {
+            'p': c['P'], 'a': c['A'], 't': c['T'], 'j': c['J'], 's': c['S'],
+            'faltas': faltas, 'pct': round(pct, 1), 'total': total
+        }
 
     @staticmethod
     def get_history(aid):
@@ -348,39 +349,29 @@ class ReportService:
     @staticmethod
     def generate_excel_curso(curso_id):
         if not xlsxwriter: return None
-        
         output = io.BytesIO()
         workbook = xlsxwriter.Workbook(output)
         ws = workbook.add_worksheet("Alumnos")
-        
-        # Estilos
         bold = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1})
         border = workbook.add_format({'border': 1})
-        red = workbook.add_format({'color': 'red', 'border': 1})
         
-        # Headers
         headers = ["Nombre", "DNI", "Tutor", "% Asist.", "Faltas", "Docs Faltantes"]
         ws.write_row(0, 0, headers, bold)
-        ws.set_column(0, 0, 25) # Nombre ancho
+        ws.set_column(0, 0, 25) 
         
         alumnos = SchoolService.get_alumnos(curso_id)
         reqs = DocService.get_requisitos_curso(curso_id)
         
         for i, a in enumerate(alumnos, start=1):
             stats = AttendanceService.get_stats(a['id'])
-            
-            # Docs
             estado_docs = DocService.get_estado_alumno(a['id'])
-            faltantes = []
-            for r in reqs:
-                if estado_docs.get(r['id']) != 1:
-                    faltantes.append(r['descripcion'])
+            faltantes = [r['descripcion'] for r in reqs if estado_docs.get(r['id']) != 1]
             
             ws.write(i, 0, a['nombre'], border)
             ws.write(i, 1, a['dni'] or "-", border)
-            ws.write(i, 2, f"{a['tutor_nombre'] or ''} ({a['tutor_telefono'] or ''})", border)
-            ws.write(i, 3, f"{100 - stats['pct']}%", border)
-            ws.write(i, 4, stats['faltas'], red if stats['faltas'] > 10 else border)
+            ws.write(i, 2, f"{a['tutor_nombre'] or ''}", border)
+            ws.write(i, 3, f"{stats['pct']}%", border)
+            ws.write(i, 4, stats['faltas'], border)
             ws.write(i, 5, ", ".join(faltantes), border)
             
         workbook.close()
@@ -494,7 +485,6 @@ def view_curso(page: ft.Page):
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
     
-    # --- Gestor de Archivos (Para exportar Excel) ---
     file_picker = ft.FilePicker(on_result=lambda e: save_file_result(e))
     page.overlay.append(file_picker)
 
@@ -503,71 +493,49 @@ def view_curso(page: ft.Page):
             try:
                 excel_data = ReportService.generate_excel_curso(cid)
                 if excel_data:
-                    with open(e.path, "wb") as f:
-                        f.write(excel_data.read())
+                    with open(e.path, "wb") as f: f.write(excel_data.read())
                     UIHelper.show_snack(page, "Archivo guardado exitosamente.")
-                else:
-                    UIHelper.show_snack(page, "Error al generar Excel (¿Librería instalada?)", True)
-            except Exception as ex:
-                UIHelper.show_snack(page, f"Error guardando: {ex}", True)
+                else: UIHelper.show_snack(page, "Error al generar Excel", True)
+            except Exception as ex: UIHelper.show_snack(page, f"Error: {ex}", True)
 
     def export_excel(e):
         fname = f"Reporte_{cn}_{date.today()}.xlsx"
         file_picker.save_file(file_name=fname)
 
-    # --- Gestor de Requisitos (Docs) ---
-# --- Gestor de Requisitos (Docs) MEJORADO ---
+    # --- Requisitos (Docs) ---
     def open_reqs_dlg(e):
-        # Habilitamos on_submit para que funcione el ENTER
-        tf_req = ft.TextField(label="Nuevo Requisito (ej: Ficha Médica)", expand=True)
+        tf_req = ft.TextField(label="Nuevo Requisito", expand=True, on_submit=lambda e: add_req_local(e))
         list_col = ft.Column(scroll="auto")
         
         def load_reqs_local():
             list_col.controls.clear()
             reqs = DocService.get_requisitos_curso(cid)
-            if not reqs: 
-                list_col.controls.append(ft.Text("Sin requisitos. Agregá uno arriba.", italic=True, size=12, color="grey"))
-            
+            if not reqs: list_col.controls.append(ft.Text("Sin requisitos. Agregá uno.", italic=True, size=12, color="grey"))
             for r in reqs:
                 list_col.controls.append(ft.Container(
                     content=ft.Row([
                         ft.Icon("check_circle", color="green", size=16),
                         ft.Text(r['descripcion'], size=14, expand=True),
-                        ft.IconButton("delete", icon_color="red", icon_size=20, tooltip="Borrar", 
-                                    on_click=lambda e, rid=r['id']: (DocService.delete_requisito(rid), load_reqs_local(), page.update()))
-                    ], alignment="spaceBetween"),
-                    bgcolor="grey100", padding=5, border_radius=5
+                        ft.IconButton("delete", icon_color="red", icon_size=20, on_click=lambda e, rid=r['id']: (DocService.delete_requisito(rid), load_reqs_local(), page.update()))
+                    ], alignment="spaceBetween"), bgcolor="grey100", padding=5, border_radius=5
                 ))
             page.update()
 
         def add_req_local(e):
             if tf_req.value:
                 DocService.add_requisito(cid, tf_req.value)
-                tf_req.value = ""
-                load_reqs_local()
-                tf_req.focus() # Mantiene el cursor ahí para seguir cargando rápido
-            else:
-                tf_req.error_text = "Escribí algo primero"
-                page.update()
+                tf_req.value = ""; load_reqs_local(); tf_req.focus()
+            else: tf_req.error_text = "Escribí algo"; page.update()
 
-        # Vinculamos el ENTER al guardado
-        tf_req.on_submit = add_req_local
-        
         load_reqs_local()
-        
         dlg = ft.AlertDialog(
             title=ft.Text("Documentación del Curso"),
             content=ft.Container(content=ft.Column([
-                ft.Text("Escribí el requisito y tocá Enter o Agregar:", size=12, color="grey"),
-                ft.Row([
-                    tf_req, 
-                    ft.ElevatedButton("Agregar", on_click=add_req_local, bgcolor="green", color="white")
-                ]),
+                ft.Row([tf_req, ft.ElevatedButton("Agregar", on_click=add_req_local, bgcolor="green", color="white")]),
                 ft.Divider(),
-                ft.Text("Lista actual (Se guarda automático):", weight="bold", size=12),
                 ft.Container(content=list_col, height=200, border=ft.border.all(1, "grey200"), border_radius=5, padding=5) 
             ], width=400), height=400),
-            actions=[ft.TextButton("Listo (Cerrar)", on_click=lambda e: page.close(dlg))]
+            actions=[ft.TextButton("Listo", on_click=lambda e: page.close(dlg))]
         )
         page.open(dlg)
 
@@ -604,36 +572,68 @@ def view_curso(page: ft.Page):
         for a in SchoolService.get_alumnos(cid):
             def_val = "P"
             if a['tpp'] == 1 and a['tpp_dias']:
-                if str(dia_sem) not in a['tpp_dias'].split(','):
-                    def_val = "N"
+                if str(dia_sem) not in a['tpp_dias'].split(','): def_val = "N"
             
             val = status_map.get(a['id'], def_val)
             dd = ft.Dropdown(
                 width=100, height=40, text_size=14, value=val,
-                options=[ft.dropdown.Option(x) for x in ["P","T","A","J","N"]],
+                options=[ft.dropdown.Option(x) for x in ["P","T","A","J","S","N"]], # Agregado S
                 on_change=lambda e, aid=a['id']: AttendanceService.mark(aid, date_tf.value, e.control.value)
             )
             asist_col.controls.append(ft.Container(content=ft.Row([ft.Text(a['nombre'], expand=True, weight="w500"), dd]), padding=5, border=ft.border.only(bottom=ft.border.BorderSide(1, "grey200"))))
         page.update()
+    
+    # --- NUEVO: Botón "Guardar" explícito para la asistencia ---
+    def guardar_asistencia_manual(e):
+        # En realidad ya se guardó en tiempo real, pero esto da feedback visual
+        UIHelper.show_snack(page, "✅ Asistencia guardada correctamente.")
+        page.go("/dashboard") # Volver al dashboard da sensación de "tarea terminada"
 
     tabs = ft.Tabs(selected_index=0, tabs=[
         ft.Tab(text="Alumnos", icon="people", content=ft.Container(content=lv, padding=10)),
-        ft.Tab(text="Asistencia", icon="check_circle", content=ft.Container(content=ft.Column([ft.Row([date_tf, ft.IconButton("refresh", on_click=load_asist)]), ft.Divider(), asist_col]), padding=10))
+        ft.Tab(text="Asistencia", icon="check_circle", content=ft.Container(
+            content=ft.Column([
+                ft.Row([date_tf, ft.IconButton("refresh", on_click=load_asist)]), 
+                ft.Divider(), 
+                asist_col
+            ]), padding=10))
     ], expand=True, on_change=lambda e: (load_alumnos() if e.control.selected_index==0 else load_asist()))
 
     load_alumnos()
     
-    # Botones de Acción Header
     actions_header = [
-        ft.ElevatedButton("📋 Docs", color="white", bgcolor="orange", on_click=open_reqs_dlg),
-        ft.ElevatedButton("📊 Excel", color="white", bgcolor="green", on_click=export_excel)
+        ft.ElevatedButton("Docs", color="white", bgcolor="orange", on_click=open_reqs_dlg),
+        ft.ElevatedButton("Excel", color="white", bgcolor="green", on_click=export_excel)
     ]
     
+    # Botón Flotante Grande para Guardar
+    fab_save = ft.FloatingActionButton(
+        icon="save", text="GUARDAR ASISTENCIA", 
+        bgcolor=THEME["primary"], 
+        on_click=guardar_asistencia_manual,
+        width=200 # Ancho para que se lea el texto
+    ) if tabs.selected_index == 1 else ft.FloatingActionButton(icon="person_add", bgcolor=THEME["primary"], on_click=lambda _: (page.session.set("alumno_id_edit", None), page.go("/form_student")))
+
+    # Actualizar FAB según tab
+    def on_tab_change(e):
+        if e.control.selected_index == 1: # Tab Asistencia
+            page.views[-1].floating_action_button = ft.FloatingActionButton(
+                icon="save", text="GUARDAR ASISTENCIA", bgcolor="green", on_click=guardar_asistencia_manual, width=220
+            )
+        else: # Tab Alumnos
+            page.views[-1].floating_action_button = ft.FloatingActionButton(
+                icon="person_add", bgcolor=THEME["primary"], on_click=lambda _: (page.session.set("alumno_id_edit", None), page.go("/form_student"))
+            )
+        if e.control.selected_index == 1: load_asist()
+        else: load_alumnos()
+        page.update()
+
+    tabs.on_change = on_tab_change
+
     return ft.View("/curso", [
         UIHelper.create_header(cn, "Gestión", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard")), actions=actions_header),
-        ft.Container(content=tabs, expand=True, bgcolor=THEME["bg"]),
-        ft.FloatingActionButton(icon="person_add", bgcolor=THEME["primary"], on_click=lambda _: (page.session.set("alumno_id_edit", None), page.go("/form_student")))
-    ])
+        ft.Container(content=tabs, expand=True, bgcolor=THEME["bg"])
+    ], floating_action_button=fab_save)
 
 def view_form_student(page: ft.Page):
     cid = page.session.get("curso_id"); aid = page.session.get("alumno_id_edit"); is_edit = aid is not None
@@ -680,49 +680,85 @@ def view_student_detail(page: ft.Page):
     stats = AttendanceService.get_stats(aid)
     history = AttendanceService.get_history(aid)
     
-    # --- Tab Info ---
-    info_col = ft.Column([
-        ft.Text(f"Nombre: {alumno['nombre']}", size=18, weight="bold"),
-        ft.Text(f"DNI: {alumno['dni'] or '-'}"),
-        ft.Text(f"Curso: {alumno['curso_nombre']} | Ciclo: {alumno['ciclo_nombre']}"),
+    # --- BLOQUE 1: CABECERA Y DATOS ---
+    card_info = UIHelper.create_card(ft.Column([
+        ft.Row([
+            ft.CircleAvatar(content=ft.Text(alumno['nombre'][0], size=30), radius=40, bgcolor=THEME["primary"], color="white"),
+            ft.Column([
+                ft.Text(alumno['nombre'], size=22, weight="bold"),
+                ft.Text(f"DNI: {alumno['dni'] or '-'}", size=16, color="grey"),
+                ft.Chip(label="TPP Activo", bgcolor="orange", label_style=ft.TextStyle(color="white")) if alumno['tpp']==1 else ft.Container()
+            ])
+        ]),
         ft.Divider(),
-        ft.Text(f"Tutor: {alumno['tutor_nombre'] or '-'} | Tel: {alumno['tutor_telefono'] or '-'}"),
-    ])
-    
-    stats_row = ft.Row([
-        UIHelper.create_card(ft.Column([ft.Text("P", size=12), ft.Text(str(stats['p']), size=24, color="green")]), padding=10),
-        UIHelper.create_card(ft.Column([ft.Text("A", size=12), ft.Text(str(stats['a']), size=24, color="red")]), padding=10),
-        UIHelper.create_card(ft.Column([ft.Text("Faltas", size=12), ft.Text(str(stats['faltas']), size=24, color="indigo")]), padding=10),
-    ], spacing=10)
-    
-    hist_col = ft.Column([ft.Text(f"{h['fecha']}: {h['status']}", size=12) for h in history[:10]], scroll="auto", height=200)
+        ft.Row([ft.Icon("phone", size=16), ft.Text(f"Tutor: {alumno['tutor_nombre'] or '-'} ({alumno['tutor_telefono'] or '-'})")])
+    ]))
 
-    # --- NUEVO: Tab Documentación (Específico del curso) ---
-    docs_col = ft.Column(scroll="auto")
-    def load_docs():
-        docs_col.controls.clear()
-        # Buscamos los requisitos DEL CURSO del alumno
-        reqs = DocService.get_requisitos_curso(alumno['curso_id'])
-        estados = DocService.get_estado_alumno(aid)
-        
-        if not reqs:
-            docs_col.controls.append(ft.Text("No hay pedidos de documentación en este curso.", italic=True))
-        
-        for r in reqs:
-            is_checked = estados.get(r['id']) == 1
-            cb = ft.Checkbox(label=r['descripcion'], value=is_checked, on_change=lambda e, rid=r['id']: (DocService.toggle_entrega(aid, rid, e.control.value), UIHelper.show_snack(page, "Actualizado")))
-            docs_col.controls.append(cb)
-        page.update()
+    # --- BLOQUE 2: ESTADÍSTICAS EXPANDIDAS ---
+    def stat_box(label, value, color):
+        return ft.Container(
+            content=ft.Column([
+                ft.Text(str(value), size=24, weight="bold", color=color),
+                ft.Text(label, size=11, color="grey")
+            ], horizontal_alignment="center"),
+            padding=10, bgcolor="white", border_radius=8, border=ft.border.all(1, "grey200"), expand=True
+        )
 
-    tabs = ft.Tabs(selected_index=0, on_change=lambda e: load_docs() if e.control.selected_index == 2 else None, tabs=[
-        ft.Tab(text="Info", content=ft.Container(content=info_col, padding=20)),
-        ft.Tab(text="Historial", content=ft.Container(content=ft.Column([stats_row, ft.Divider(), hist_col]), padding=20)),
-        ft.Tab(text="Documentación", content=ft.Container(content=docs_col, padding=20)),
-    ])
+    card_stats = UIHelper.create_card(ft.Column([
+        ft.Text("Estadísticas del Ciclo", weight="bold"),
+        ft.Container(height=10),
+        ft.Row([
+            stat_box("Presentes", stats['p'], "green"),
+            stat_box("Ausentes", stats['a'], "red"),
+            stat_box("Tardes", stats['t'], "orange"),
+        ]),
+        ft.Container(height=5),
+        ft.Row([
+            stat_box("Justif.", stats['j'], "blue"),
+            stat_box("Suspen.", stats['s'], "purple"),
+            stat_box("Faltas Tot.", stats['faltas'], "text"),
+        ])
+    ]))
+
+    # --- BLOQUE 3: DOCUMENTACIÓN (CHECKLIST) ---
+    docs_col = ft.Column()
+    reqs = DocService.get_requisitos_curso(alumno['curso_id'])
+    estados = DocService.get_estado_alumno(aid)
+    
+    if not reqs: docs_col.controls.append(ft.Text("No hay requisitos.", italic=True))
+    
+    for r in reqs:
+        is_checked = estados.get(r['id']) == 1
+        docs_col.controls.append(ft.Checkbox(
+            label=r['descripcion'], value=is_checked, 
+            on_change=lambda e, rid=r['id']: (DocService.toggle_entrega(aid, rid, e.control.value), UIHelper.show_snack(page, "Actualizado"))
+        ))
+    
+    card_docs = UIHelper.create_card(ft.Column([
+        ft.Text("Legajo / Documentación", weight="bold"),
+        ft.Divider(),
+        docs_col
+    ]))
+
+    # --- BLOQUE 4: HISTORIAL (ABAJO) ---
+    hist_col = ft.Column([ft.Text(f"{h['fecha']}: {h['status']}", size=14) for h in history], scroll="auto", height=200)
+    card_hist = UIHelper.create_card(ft.Column([
+        ft.Text("Historial Completo", weight="bold"),
+        ft.Divider(),
+        hist_col
+    ]))
+
+    # Layout Unificado: Scrollable
+    content = ft.Column([
+        card_info,
+        card_stats,
+        card_docs,
+        card_hist
+    ], scroll="auto", expand=True)
 
     return ft.View("/student_detail", [
-        UIHelper.create_header(alumno['nombre'], "Detalle", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso"))),
-        ft.Container(content=tabs, padding=20, bgcolor=THEME["bg"], expand=True)
+        UIHelper.create_header("Legajo del Alumno", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso"))),
+        ft.Container(content=content, padding=20, bgcolor=THEME["bg"], expand=True)
     ])
 
 def view_admin(page: ft.Page):
@@ -776,15 +812,11 @@ def view_users(page: ft.Page):
     def open_assign_dlg(uid, username):
         cursos = SchoolService.get_cursos_all_active()
         assigned = UserService.get_user_cursos(uid)
-        
         checks_col = ft.Column(scroll="auto", height=300)
-        
         for c in cursos:
             is_checked = c['id'] in assigned
-            cb = ft.Checkbox(label=c['nombre'], value=is_checked, 
-                             on_change=lambda e, cid=c['id']: UserService.toggle_user_curso(uid, cid, e.control.value))
+            cb = ft.Checkbox(label=c['nombre'], value=is_checked, on_change=lambda e, cid=c['id']: UserService.toggle_user_curso(uid, cid, e.control.value))
             checks_col.controls.append(cb)
-            
         dlg = ft.AlertDialog(title=ft.Text(f"Cursos para {username}"), content=checks_col)
         page.open(dlg)
 
@@ -794,21 +826,12 @@ def view_users(page: ft.Page):
             actions = []
             if us['role'] != 'admin':
                 actions.append(ft.IconButton("assignment_ind", icon_color="blue", tooltip="Asignar Cursos", on_click=lambda e, uid=us['id'], un=us['username']: open_assign_dlg(uid, un)))
-            
             if us['username'] != page.session.get("user")['username']:
                 actions.append(ft.IconButton("delete", icon_color="red", tooltip="Eliminar", on_click=lambda e, uid=us['id']: (UserService.delete_user(uid), load(), page.update())))
-            
-            col.controls.append(UIHelper.create_card(ft.ListTile(
-                leading=ft.Icon("person"), 
-                title=ft.Text(us['username']), 
-                subtitle=ft.Text(us['role']), 
-                trailing=ft.Row(actions, tight=True)
-            ), padding=5))
+            col.controls.append(UIHelper.create_card(ft.ListTile(leading=ft.Icon("person"), title=ft.Text(us['username']), subtitle=ft.Text(us['role']), trailing=ft.Row(actions, tight=True)), padding=5))
 
     def add(e):
-        if u.value and p.value:
-            UserService.add_user(u.value, p.value, r.value)
-            u.value = ""; p.value = ""; load(); page.update()
+        if u.value and p.value: UserService.add_user(u.value, p.value, r.value); u.value = ""; p.value = ""; load(); page.update()
 
     load()
     return ft.View("/users", [
@@ -870,7 +893,7 @@ if __name__ == "__main__":
 # ==============================================================================
 # 🧨 ZONA DE LIMPIEZA V5 (REQUERIDO PARA ACTIVAR LOS NUEVOS CAMBIOS)
 # ==============================================================================
-try:
+"""try:
     print("--- 🧹 LIMPIEZA DB PARA V5 (ESTRUCTURA NUEVA) ---")
     conn_fix = db.get_connection()
     if conn_fix:
@@ -889,4 +912,4 @@ try:
         print("🔨 RE-CREANDO ESTRUCTURA V5...")
         db._init_db_structure()
 except Exception as e:
-    print(f"❌ ERROR EN LIMPIEZA: {e}")
+    print(f"❌ ERROR EN LIMPIEZA: {e}")"""
