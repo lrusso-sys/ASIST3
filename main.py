@@ -2,12 +2,20 @@ import flet as ft
 import psycopg2
 import psycopg2.extras
 import hashlib
-from datetime import date
+from datetime import date, datetime
 import os
 import threading
+import io
+import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v4.0 (Features) ---", flush=True)
+print("--- Oñepyrũ aplicación v5.0 (Excel + Docs por Curso) ---", flush=True)
+
+try:
+    import xlsxwriter
+except ImportError:
+    xlsxwriter = None
+    print("⚠️ XlsxWriter no instalado. La exportación fallará.")
 
 # --- CONFIGURACIÓN UI (Constantes) ---
 THEME = {
@@ -27,7 +35,6 @@ THEME = {
 # ==============================================================================
 
 class UIHelper:
-    """Componentes visuales reutilizables."""
     @staticmethod
     def show_snack(page: ft.Page, message: str, is_error: bool = False):
         color = THEME["danger"] if is_error else THEME["success"]
@@ -114,34 +121,26 @@ class DatabaseManager:
         if not conn: return
         try:
             with conn.cursor() as cur:
-                # Tablas Base
                 cur.execute("CREATE TABLE IF NOT EXISTS Usuarios (id SERIAL PRIMARY KEY, username TEXT UNIQUE, password TEXT, role TEXT)")
                 cur.execute("CREATE TABLE IF NOT EXISTS Ciclos (id SERIAL PRIMARY KEY, nombre TEXT UNIQUE, activo INTEGER DEFAULT 0)")
                 cur.execute("CREATE TABLE IF NOT EXISTS Cursos (id SERIAL PRIMARY KEY, nombre TEXT, ciclo_id INTEGER REFERENCES Ciclos(id) ON DELETE CASCADE)")
-                
-                # Relación Usuario-Curso (NUEVO)
                 cur.execute("CREATE TABLE IF NOT EXISTS Usuario_Cursos (usuario_id INTEGER REFERENCES Usuarios(id) ON DELETE CASCADE, curso_id INTEGER REFERENCES Cursos(id) ON DELETE CASCADE, PRIMARY KEY (usuario_id, curso_id))")
 
-                # Alumnos y Asistencia
                 cur.execute("""CREATE TABLE IF NOT EXISTS Alumnos (
                     id SERIAL PRIMARY KEY, 
                     curso_id INTEGER REFERENCES Cursos(id) ON DELETE CASCADE, 
-                    nombre TEXT, 
-                    dni TEXT, 
-                    observaciones TEXT, 
-                    tutor_nombre TEXT, 
-                    tutor_telefono TEXT, 
-                    tpp INTEGER DEFAULT 0, 
-                    tpp_dias TEXT, 
+                    nombre TEXT, dni TEXT, observaciones TEXT, 
+                    tutor_nombre TEXT, tutor_telefono TEXT, 
+                    tpp INTEGER DEFAULT 0, tpp_dias TEXT, 
                     UNIQUE(curso_id, nombre)
                 )""")
+                
                 cur.execute("CREATE TABLE IF NOT EXISTS Asistencia (id SERIAL PRIMARY KEY, alumno_id INTEGER REFERENCES Alumnos(id) ON DELETE CASCADE, fecha TEXT, status TEXT, UNIQUE(alumno_id, fecha))")
 
-                # Documentación (NUEVO)
-                cur.execute("CREATE TABLE IF NOT EXISTS Requisitos (id SERIAL PRIMARY KEY, descripcion TEXT UNIQUE)") # Requisitos globales
+                # MODIFICADO: Requisitos ahora dependen del CURSO
+                cur.execute("CREATE TABLE IF NOT EXISTS Requisitos (id SERIAL PRIMARY KEY, curso_id INTEGER REFERENCES Cursos(id) ON DELETE CASCADE, descripcion TEXT)")
                 cur.execute("CREATE TABLE IF NOT EXISTS Documentacion_Alumno (requisito_id INTEGER REFERENCES Requisitos(id) ON DELETE CASCADE, alumno_id INTEGER REFERENCES Alumnos(id) ON DELETE CASCADE, entregado INTEGER DEFAULT 0, PRIMARY KEY (requisito_id, alumno_id))")
 
-                # Admin Default
                 cur.execute("SELECT COUNT(*) FROM Usuarios")
                 if cur.fetchone()[0] == 0:
                     cur.execute("INSERT INTO Usuarios (username, password, role) VALUES (%s, %s, %s)", ("admin", Security.hash_password("admin"), "admin"))
@@ -160,7 +159,7 @@ class DatabaseManager:
                 cur.execute(query, params)
                 return [dict(row) for row in cur.fetchall()]
         except Exception as e:
-            print(f"❌ Error Fetch All: {e} | Query: {query}")
+            print(f"❌ Error Fetch All: {e}")
             return []
         finally: conn.close()
 
@@ -211,7 +210,6 @@ class UserService:
     @staticmethod
     def delete_user(uid): return db.execute("DELETE FROM Usuarios WHERE id = %s", (uid,))
     
-    # --- NUEVO: Asignación de Cursos ---
     @staticmethod
     def get_user_cursos(uid):
         rows = db.fetch_all("SELECT curso_id FROM Usuario_Cursos WHERE usuario_id = %s", (uid,))
@@ -254,26 +252,17 @@ class SchoolService:
     @staticmethod
     def delete_ciclo(cid): return db.execute("DELETE FROM Ciclos WHERE id = %s", (cid,))
 
-    # --- NUEVO: Cursos filtrados por usuario ---
     @staticmethod
     def get_cursos_activos(user_id=None, role=None):
         ciclo = SchoolService.get_ciclo_activo()
         if not ciclo: return []
-        
-        # Si es admin, ve todo. Si no, solo los asignados.
         if role == 'admin':
             return db.fetch_all("SELECT * FROM Cursos WHERE ciclo_id = %s ORDER BY nombre", (ciclo['id'],))
         else:
-            return db.fetch_all("""
-                SELECT c.* FROM Cursos c
-                JOIN Usuario_Cursos uc ON c.id = uc.curso_id
-                WHERE c.ciclo_id = %s AND uc.usuario_id = %s
-                ORDER BY c.nombre
-            """, (ciclo['id'], user_id))
+            return db.fetch_all("SELECT c.* FROM Cursos c JOIN Usuario_Cursos uc ON c.id = uc.curso_id WHERE c.ciclo_id = %s AND uc.usuario_id = %s ORDER BY c.nombre", (ciclo['id'], user_id))
             
     @staticmethod
     def get_cursos_all_active():
-        # Para el admin panel, ver todos los cursos del ciclo activo para asignar
         ciclo = SchoolService.get_ciclo_activo()
         if not ciclo: return []
         return db.fetch_all("SELECT * FROM Cursos WHERE ciclo_id = %s ORDER BY nombre", (ciclo['id'],))
@@ -284,7 +273,7 @@ class SchoolService:
     @staticmethod
     def get_alumno(aid):
         return db.fetch_one("""
-            SELECT a.*, c.nombre as curso_nombre, ci.nombre as ciclo_nombre
+            SELECT a.*, c.nombre as curso_nombre, ci.nombre as ciclo_nombre, c.id as curso_id
             FROM Alumnos a 
             JOIN Cursos c ON a.curso_id = c.id 
             JOIN Ciclos ci ON c.ciclo_id = ci.id
@@ -305,14 +294,14 @@ class SchoolService:
                           (data['nombre'], data['dni'], data['obs'], data['tn'], data['tt'], data['tpp'], data['tpp_dias'], aid))
 
 class DocService:
-    """Manejo de Requisitos y Documentación."""
     @staticmethod
-    def get_requisitos():
-        return db.fetch_all("SELECT * FROM Requisitos ORDER BY descripcion")
+    def get_requisitos_curso(curso_id):
+        # AHORA filtra por curso
+        return db.fetch_all("SELECT * FROM Requisitos WHERE curso_id = %s ORDER BY descripcion", (curso_id,))
     
     @staticmethod
-    def add_requisito(desc):
-        return db.execute("INSERT INTO Requisitos (descripcion) VALUES (%s) ON CONFLICT DO NOTHING", (desc,))
+    def add_requisito(curso_id, desc):
+        return db.execute("INSERT INTO Requisitos (curso_id, descripcion) VALUES (%s, %s)", (curso_id, desc))
     
     @staticmethod
     def delete_requisito(rid):
@@ -320,16 +309,14 @@ class DocService:
     
     @staticmethod
     def get_estado_alumno(aid):
-        # Devuelve dict {req_id: entregado (1/0)}
         rows = db.fetch_all("SELECT requisito_id, entregado FROM Documentacion_Alumno WHERE alumno_id = %s", (aid,))
         return {r['requisito_id']: r['entregado'] for r in rows}
     
     @staticmethod
     def toggle_entrega(aid, rid, estado):
-        if estado:
-            db.execute("INSERT INTO Documentacion_Alumno (requisito_id, alumno_id, entregado) VALUES (%s, %s, 1) ON CONFLICT (requisito_id, alumno_id) DO UPDATE SET entregado=1", (rid, aid))
-        else:
-            db.execute("UPDATE Documentacion_Alumno SET entregado=0 WHERE requisito_id=%s AND alumno_id=%s", (rid, aid))
+        val = 1 if estado else 0
+        q = "INSERT INTO Documentacion_Alumno (requisito_id, alumno_id, entregado) VALUES (%s, %s, %s) ON CONFLICT (requisito_id, alumno_id) DO UPDATE SET entregado=EXCLUDED.entregado"
+        db.execute(q, (rid, aid, val))
 
 class AttendanceService:
     @staticmethod
@@ -356,6 +343,49 @@ class AttendanceService:
     @staticmethod
     def get_history(aid):
         return db.fetch_all("SELECT fecha, status FROM Asistencia WHERE alumno_id = %s ORDER BY fecha DESC", (aid,))
+
+class ReportService:
+    @staticmethod
+    def generate_excel_curso(curso_id):
+        if not xlsxwriter: return None
+        
+        output = io.BytesIO()
+        workbook = xlsxwriter.Workbook(output)
+        ws = workbook.add_worksheet("Alumnos")
+        
+        # Estilos
+        bold = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1})
+        border = workbook.add_format({'border': 1})
+        red = workbook.add_format({'color': 'red', 'border': 1})
+        
+        # Headers
+        headers = ["Nombre", "DNI", "Tutor", "% Asist.", "Faltas", "Docs Faltantes"]
+        ws.write_row(0, 0, headers, bold)
+        ws.set_column(0, 0, 25) # Nombre ancho
+        
+        alumnos = SchoolService.get_alumnos(curso_id)
+        reqs = DocService.get_requisitos_curso(curso_id)
+        
+        for i, a in enumerate(alumnos, start=1):
+            stats = AttendanceService.get_stats(a['id'])
+            
+            # Docs
+            estado_docs = DocService.get_estado_alumno(a['id'])
+            faltantes = []
+            for r in reqs:
+                if estado_docs.get(r['id']) != 1:
+                    faltantes.append(r['descripcion'])
+            
+            ws.write(i, 0, a['nombre'], border)
+            ws.write(i, 1, a['dni'] or "-", border)
+            ws.write(i, 2, f"{a['tutor_nombre'] or ''} ({a['tutor_telefono'] or ''})", border)
+            ws.write(i, 3, f"{100 - stats['pct']}%", border)
+            ws.write(i, 4, stats['faltas'], red if stats['faltas'] > 10 else border)
+            ws.write(i, 5, ", ".join(faltantes), border)
+            
+        workbook.close()
+        output.seek(0)
+        return output
 
 # ==============================================================================
 # CAPA 4: VISTAS (FRONTEND)
@@ -402,15 +432,14 @@ def view_dashboard(page: ft.Page):
         if not ciclo:
             txt_ciclo.value = "⚠️ SIN CICLO ACTIVO"
             txt_ciclo.color = "#FFCDD2"
-            grid.controls.append(ft.Text("No hay ciclo lectivo activo. Ve a Configuración.", italic=True, color="red", size=16))
+            grid.controls.append(ft.Text("No hay ciclo lectivo activo.", italic=True, color="red"))
         else:
             txt_ciclo.value = f"Ciclo: {ciclo['nombre']}"
             txt_ciclo.color = "white"
-            # FIX: Pasar usuario y rol para filtrar
             cursos = SchoolService.get_cursos_activos(user['id'], user['role'])
             
             if not cursos:
-                msg = "No tenés cursos asignados." if user['role'] != 'admin' else "No hay cursos en este ciclo."
+                msg = "No tenés cursos asignados." if user['role'] != 'admin' else "No hay cursos."
                 grid.controls.append(ft.Text(msg, italic=True, color="grey"))
 
             for c in cursos:
@@ -462,8 +491,66 @@ def view_dashboard(page: ft.Page):
 
 def view_curso(page: ft.Page):
     cid = page.session.get("curso_id")
+    cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
     
+    # --- Gestor de Archivos (Para exportar Excel) ---
+    file_picker = ft.FilePicker(on_result=lambda e: save_file_result(e))
+    page.overlay.append(file_picker)
+
+    def save_file_result(e: ft.FilePickerResultEvent):
+        if e.path:
+            try:
+                excel_data = ReportService.generate_excel_curso(cid)
+                if excel_data:
+                    with open(e.path, "wb") as f:
+                        f.write(excel_data.read())
+                    UIHelper.show_snack(page, "Archivo guardado exitosamente.")
+                else:
+                    UIHelper.show_snack(page, "Error al generar Excel (¿Librería instalada?)", True)
+            except Exception as ex:
+                UIHelper.show_snack(page, f"Error guardando: {ex}", True)
+
+    def export_excel(e):
+        fname = f"Reporte_{cn}_{date.today()}.xlsx"
+        file_picker.save_file(file_name=fname)
+
+    # --- Gestor de Requisitos (Docs) ---
+    def open_reqs_dlg(e):
+        tf_req = ft.TextField(label="Nuevo Requisito (ej: Ficha Médica)")
+        list_col = ft.Column()
+        
+        def load_reqs_local():
+            list_col.controls.clear()
+            reqs = DocService.get_requisitos_curso(cid)
+            if not reqs: list_col.controls.append(ft.Text("Sin requisitos.", italic=True, size=12))
+            for r in reqs:
+                list_col.controls.append(ft.ListTile(
+                    title=ft.Text(r['descripcion'], size=14),
+                    trailing=ft.IconButton("delete", icon_color="red", icon_size=20, on_click=lambda e, rid=r['id']: (DocService.delete_requisito(rid), load_reqs_local(), page.update()))
+                ))
+            page.update()
+
+        def add_req_local(e):
+            if tf_req.value:
+                DocService.add_requisito(cid, tf_req.value)
+                tf_req.value = ""
+                load_reqs_local()
+        
+        load_reqs_local()
+        dlg = ft.AlertDialog(
+            title=ft.Text("Documentación del Curso"),
+            content=ft.Container(content=ft.Column([
+                ft.Row([tf_req, ft.IconButton("add", icon_color="green", on_click=add_req_local)]),
+                ft.Divider(),
+                ft.Text("Lista de pedidos:", weight="bold", size=12),
+                ft.Container(content=list_col, height=200) # Scroll limitado
+            ], width=300), height=300),
+            actions=[ft.TextButton("Cerrar", on_click=lambda e: page.close(dlg))]
+        )
+        page.open(dlg)
+
+    # --- UI Principal ---
     lv = ft.Column(scroll="auto", expand=True)
     def load_alumnos():
         lv.controls.clear()
@@ -514,8 +601,15 @@ def view_curso(page: ft.Page):
     ], expand=True, on_change=lambda e: (load_alumnos() if e.control.selected_index==0 else load_asist()))
 
     load_alumnos()
+    
+    # Botones de Acción Header
+    actions_header = [
+        ft.ElevatedButton("📋 Docs", color="white", bgcolor="orange", on_click=open_reqs_dlg),
+        ft.ElevatedButton("📊 Excel", color="white", bgcolor="green", on_click=export_excel)
+    ]
+    
     return ft.View("/curso", [
-        UIHelper.create_header(page.session.get("curso_nombre"), "Gestión", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard"))),
+        UIHelper.create_header(cn, "Gestión", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard")), actions=actions_header),
         ft.Container(content=tabs, expand=True, bgcolor=THEME["bg"]),
         ft.FloatingActionButton(icon="person_add", bgcolor=THEME["primary"], on_click=lambda _: (page.session.set("alumno_id_edit", None), page.go("/form_student")))
     ])
@@ -582,15 +676,16 @@ def view_student_detail(page: ft.Page):
     
     hist_col = ft.Column([ft.Text(f"{h['fecha']}: {h['status']}", size=12) for h in history[:10]], scroll="auto", height=200)
 
-    # --- NUEVO: Tab Documentación ---
+    # --- NUEVO: Tab Documentación (Específico del curso) ---
     docs_col = ft.Column(scroll="auto")
     def load_docs():
         docs_col.controls.clear()
-        reqs = DocService.get_requisitos()
+        # Buscamos los requisitos DEL CURSO del alumno
+        reqs = DocService.get_requisitos_curso(alumno['curso_id'])
         estados = DocService.get_estado_alumno(aid)
         
         if not reqs:
-            docs_col.controls.append(ft.Text("No hay requisitos definidos. (Pedir a Admin)", italic=True))
+            docs_col.controls.append(ft.Text("No hay pedidos de documentación en este curso.", italic=True))
         
         for r in reqs:
             is_checked = estados.get(r['id']) == 1
@@ -615,29 +710,6 @@ def view_admin(page: ft.Page):
         ft.Container(content=ft.Column([
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("calendar_month", color=THEME["primary"]), title=ft.Text("Ciclos Lectivos"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/ciclos"))),
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("people", color=THEME["primary"]), title=ft.Text("Usuarios"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/users"))),
-            UIHelper.create_card(ft.ListTile(leading=ft.Icon("folder", color=THEME["primary"]), title=ft.Text("Requisitos Documentación"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/docs")))
-        ]), padding=20, bgcolor=THEME["bg"], expand=True)
-    ])
-
-def view_docs_admin(page: ft.Page):
-    tf = ft.TextField(label="Nuevo Requisito (ej: Ficha Médica)")
-    col = ft.Column()
-    
-    def load():
-        col.controls.clear()
-        for r in DocService.get_requisitos():
-            col.controls.append(ft.ListTile(title=ft.Text(r['descripcion']), trailing=ft.IconButton("delete", icon_color="red", on_click=lambda e, rid=r['id']: (DocService.delete_requisito(rid), load(), page.update()))))
-        page.update()
-    
-    def add(e):
-        if tf.value: DocService.add_requisito(tf.value); tf.value=""; load()
-    
-    load()
-    return ft.View("/docs", [
-        UIHelper.create_header("Documentación", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/admin"))),
-        ft.Container(content=ft.Column([
-            ft.Row([tf, ft.ElevatedButton("Agregar", on_click=add)]),
-            ft.Divider(), col
         ]), padding=20, bgcolor=THEME["bg"], expand=True)
     ])
 
@@ -680,7 +752,6 @@ def view_users(page: ft.Page):
     u = ft.TextField(label="Usuario"); p = ft.TextField(label="Clave", password=True); r = ft.Dropdown(value="preceptor", options=[ft.dropdown.Option("admin"), ft.dropdown.Option("preceptor")])
     col = ft.Column(scroll="auto")
     
-    # --- Diálogo para asignar cursos ---
     def open_assign_dlg(uid, username):
         cursos = SchoolService.get_cursos_all_active()
         assigned = UserService.get_user_cursos(uid)
@@ -699,7 +770,6 @@ def view_users(page: ft.Page):
     def load():
         col.controls.clear()
         for us in UserService.get_users():
-            # Botones de acción
             actions = []
             if us['role'] != 'admin':
                 actions.append(ft.IconButton("assignment_ind", icon_color="blue", tooltip="Asignar Cursos", on_click=lambda e, uid=us['id'], un=us['username']: open_assign_dlg(uid, un)))
@@ -745,8 +815,7 @@ def main(page: ft.Page):
         "/form_student": view_form_student,
         "/admin": view_admin,
         "/ciclos": view_ciclos,
-        "/users": view_users,
-        "/docs": view_docs_admin
+        "/users": view_users
     }
 
     def route_change(route):
@@ -778,25 +847,25 @@ if __name__ == "__main__":
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
 
 # ==============================================================================
-# 🧨 ZONA DE LIMPIEZA (SOLO SI SE ROMPE TODO - DESCOMENTAR SOLO 1 VEZ)
+# 🧨 ZONA DE LIMPIEZA V5 (REQUERIDO PARA ACTIVAR LOS NUEVOS CAMBIOS)
 # ==============================================================================
-# try:
-#     print("--- 🧹 LIMPIEZA DB (PRECAUCIÓN) ---")
-#     conn_fix = db.get_connection()
-#     if conn_fix:
-#         with conn_fix.cursor() as cur:
-#             # Borramos para recrear con las tablas nuevas (Usuario_Cursos, Requisitos, etc)
-#             cur.execute("DROP TABLE IF EXISTS Asistencia CASCADE")
-#             cur.execute("DROP TABLE IF EXISTS Alumnos CASCADE") 
-#             cur.execute("DROP TABLE IF EXISTS Cursos CASCADE")
-#             cur.execute("DROP TABLE IF EXISTS Ciclos CASCADE")
-#             cur.execute("DROP TABLE IF EXISTS Usuario_Cursos CASCADE") # Nueva tabla
-#             cur.execute("DROP TABLE IF EXISTS Requisitos CASCADE")     # Nueva tabla
-#             cur.execute("DROP TABLE IF EXISTS Documentacion_Alumno CASCADE") # Nueva tabla
-#             conn_fix.commit()
-#         conn_fix.close()
-#         print("✅ TABLAS BORRADAS.")
-#         print("🔨 RE-CREANDO ESTRUCTURA V4...")
-#         db._init_db_structure()
-# except Exception as e:
-#     print(f"❌ ERROR EN LIMPIEZA: {e}")
+try:
+    print("--- 🧹 LIMPIEZA DB PARA V5 (ESTRUCTURA NUEVA) ---")
+    conn_fix = db.get_connection()
+    if conn_fix:
+        with conn_fix.cursor() as cur:
+            # Borramos para recrear porque cambio la tabla Requisitos
+            cur.execute("DROP TABLE IF EXISTS Asistencia CASCADE")
+            cur.execute("DROP TABLE IF EXISTS Alumnos CASCADE") 
+            cur.execute("DROP TABLE IF EXISTS Cursos CASCADE")
+            cur.execute("DROP TABLE IF EXISTS Ciclos CASCADE")
+            cur.execute("DROP TABLE IF EXISTS Usuario_Cursos CASCADE") 
+            cur.execute("DROP TABLE IF EXISTS Requisitos CASCADE")     
+            cur.execute("DROP TABLE IF EXISTS Documentacion_Alumno CASCADE")
+            conn_fix.commit()
+        conn_fix.close()
+        print("✅ TABLAS BORRADAS.")
+        print("🔨 RE-CREANDO ESTRUCTURA V5...")
+        db._init_db_structure()
+except Exception as e:
+    print(f"❌ ERROR EN LIMPIEZA: {e}")
