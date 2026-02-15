@@ -2,19 +2,20 @@ import flet as ft
 import psycopg2
 import psycopg2.extras
 import hashlib
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 import os
 import threading
 import io
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v7.0 (Reportes Avanzados) ---", flush=True)
+print("--- Oñepyrũ aplicación v7.1 (Fix Visual + Debug) ---", flush=True)
 
 try:
     import xlsxwriter
+    print("✅ Librería XlsxWriter detectada correctamente.")
 except ImportError:
     xlsxwriter = None
-    print("⚠️ XlsxWriter no instalado. La exportación fallará.")
+    print("⚠️ URGENTE: XlsxWriter NO está instalado. Agregalo a requirements.txt")
 
 # --- CONFIGURACIÓN UI (Constantes) ---
 THEME = {
@@ -322,13 +323,11 @@ class AttendanceService:
 
     @staticmethod
     def get_stats(aid):
-        # Stats globales
         rows = db.fetch_all("SELECT status FROM Asistencia WHERE alumno_id = %s", (aid,))
         return AttendanceService._calc_stats(rows)
 
     @staticmethod
     def get_stats_range(aid, f_inicio, f_fin):
-        # Stats POR RANGO DE FECHAS
         rows = db.fetch_all("SELECT status FROM Asistencia WHERE alumno_id = %s AND fecha >= %s AND fecha <= %s", (aid, f_inicio, f_fin))
         return AttendanceService._calc_stats(rows)
     
@@ -358,84 +357,92 @@ class AttendanceService:
 class ReportService:
     @staticmethod
     def generate_excel_curso(curso_id, f_inicio, f_fin):
-        if not xlsxwriter: return None
-        output = io.BytesIO()
-        workbook = xlsxwriter.Workbook(output)
-        ws = workbook.add_worksheet("Curso")
-        
-        # Formatos
-        title_fmt = workbook.add_format({'bold': True, 'font_size': 14, 'align': 'center'})
-        header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1})
-        cell_fmt = workbook.add_format({'border': 1})
-        red_fmt = workbook.add_format({'border': 1, 'color': 'red'})
+        print(f"[DEBUG EXCEL] Iniciando reporte Curso ID: {curso_id} ({f_inicio} a {f_fin})")
+        if not xlsxwriter: 
+            print("[DEBUG EXCEL] ERROR: Librería xlsxwriter no detectada.")
+            return None
+            
+        try:
+            output = io.BytesIO()
+            workbook = xlsxwriter.Workbook(output)
+            ws = workbook.add_worksheet("Curso")
+            
+            title_fmt = workbook.add_format({'bold': True, 'font_size': 14, 'align': 'center'})
+            header_fmt = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1})
+            cell_fmt = workbook.add_format({'border': 1})
+            red_fmt = workbook.add_format({'border': 1, 'color': 'red'})
 
-        # Título
-        ws.merge_range('A1:F1', f"Informe de Asistencia: {f_inicio} al {f_fin}", title_fmt)
-        
-        headers = ["Nombre", "DNI", "Presentes", "Faltas Totales", "% Asist.", "Situación"]
-        ws.write_row(2, 0, headers, header_fmt)
-        ws.set_column(0, 0, 30) # Nombre ancho
-        
-        alumnos = SchoolService.get_alumnos(curso_id)
-        
-        for i, a in enumerate(alumnos, start=3):
-            # Calculamos stats SOLO para el periodo
-            stats = AttendanceService.get_stats_range(a['id'], f_inicio, f_fin)
+            ws.merge_range('A1:F1', f"Informe: {f_inicio} al {f_fin}", title_fmt)
             
-            ws.write(i, 0, a['nombre'], cell_fmt)
-            ws.write(i, 1, a['dni'] or "-", cell_fmt)
-            ws.write(i, 2, stats['p'], cell_fmt)
-            ws.write(i, 3, stats['faltas'], cell_fmt)
-            ws.write(i, 4, f"{stats['pct']}%", cell_fmt)
+            headers = ["Nombre", "DNI", "Presentes", "Faltas Tot.", "% Asist.", "Situación"]
+            ws.write_row(2, 0, headers, header_fmt)
+            ws.set_column(0, 0, 30) 
             
-            situacion = "Regular" if stats['pct'] >= 75 else "En Riesgo"
-            ws.write(i, 5, situacion, red_fmt if situacion == "En Riesgo" else cell_fmt)
+            alumnos = SchoolService.get_alumnos(curso_id)
+            print(f"[DEBUG EXCEL] Alumnos encontrados: {len(alumnos)}")
             
-        workbook.close()
-        output.seek(0)
-        return output
+            for i, a in enumerate(alumnos, start=3):
+                stats = AttendanceService.get_stats_range(a['id'], f_inicio, f_fin)
+                
+                ws.write(i, 0, a['nombre'], cell_fmt)
+                ws.write(i, 1, a['dni'] or "-", cell_fmt)
+                ws.write(i, 2, stats['p'], cell_fmt)
+                ws.write(i, 3, stats['faltas'], cell_fmt)
+                ws.write(i, 4, f"{stats['pct']}%", cell_fmt)
+                
+                situacion = "Regular" if stats['pct'] >= 75 else "En Riesgo"
+                ws.write(i, 5, situacion, red_fmt if situacion == "En Riesgo" else cell_fmt)
+                
+            workbook.close()
+            output.seek(0)
+            print("[DEBUG EXCEL] Excel generado exitosamente.")
+            return output
+        except Exception as e:
+            print(f"[DEBUG EXCEL] EXCEPCIÓN GENERANDO: {e}")
+            return None
 
     @staticmethod
     def generate_excel_alumno(alumno_id, f_inicio, f_fin):
+        print(f"[DEBUG EXCEL] Reporte Individual ID: {alumno_id}")
         if not xlsxwriter: return None
-        alumno = SchoolService.get_alumno(alumno_id)
-        historial = AttendanceService.get_history_range(alumno_id, f_inicio, f_fin)
-        stats = AttendanceService.get_stats_range(alumno_id, f_inicio, f_fin)
-        
-        output = io.BytesIO()
-        workbook = xlsxwriter.Workbook(output)
-        ws = workbook.add_worksheet("Alumno")
-        
-        bold = workbook.add_format({'bold': True})
-        header = workbook.add_format({'bold': True, 'bg_color': '#EEEEEE', 'border': 1})
-        cell = workbook.add_format({'border': 1})
-        
-        # Info Alumno
-        ws.write(0, 0, f"Alumno: {alumno['nombre']}", bold)
-        ws.write(1, 0, f"DNI: {alumno['dni']}", bold)
-        ws.write(2, 0, f"Período: {f_inicio} al {f_fin}")
-        
-        # Resumen
-        ws.write(4, 0, "RESUMEN DEL PERIODO", bold)
-        ws.write(5, 0, f"Presentes: {stats['p']}")
-        ws.write(6, 0, f"Ausentes: {stats['a']}")
-        ws.write(7, 0, f"Faltas Totales: {stats['faltas']}")
-        ws.write(8, 0, f"Porcentaje: {stats['pct']}%")
-        
-        # Detalle Diario
-        ws.write(10, 0, "Fecha", header)
-        ws.write(10, 1, "Estado", header)
-        ws.set_column(0, 0, 15)
-        
-        for i, h in enumerate(historial, start=11):
-            ws.write(i, 0, h['fecha'], cell)
-            # Traducción de códigos
-            mapa = {'P': 'Presente', 'A': 'Ausente', 'T': 'Tarde', 'S': 'Suspendido', 'J': 'Justificado'}
-            ws.write(i, 1, mapa.get(h['status'], h['status']), cell)
+        try:
+            alumno = SchoolService.get_alumno(alumno_id)
+            historial = AttendanceService.get_history_range(alumno_id, f_inicio, f_fin)
+            stats = AttendanceService.get_stats_range(alumno_id, f_inicio, f_fin)
             
-        workbook.close()
-        output.seek(0)
-        return output
+            output = io.BytesIO()
+            workbook = xlsxwriter.Workbook(output)
+            ws = workbook.add_worksheet("Alumno")
+            
+            bold = workbook.add_format({'bold': True})
+            header = workbook.add_format({'bold': True, 'bg_color': '#EEEEEE', 'border': 1})
+            cell = workbook.add_format({'border': 1})
+            
+            ws.write(0, 0, f"Alumno: {alumno['nombre']}", bold)
+            ws.write(1, 0, f"DNI: {alumno['dni']}", bold)
+            ws.write(2, 0, f"Período: {f_inicio} al {f_fin}")
+            
+            ws.write(4, 0, "RESUMEN DEL PERIODO", bold)
+            ws.write(5, 0, f"Presentes: {stats['p']}")
+            ws.write(6, 0, f"Ausentes: {stats['a']}")
+            ws.write(7, 0, f"Faltas Totales: {stats['faltas']}")
+            ws.write(8, 0, f"Porcentaje: {stats['pct']}%")
+            
+            ws.write(10, 0, "Fecha", header)
+            ws.write(10, 1, "Estado", header)
+            ws.set_column(0, 0, 15)
+            
+            for i, h in enumerate(historial, start=11):
+                ws.write(i, 0, h['fecha'], cell)
+                mapa = {'P': 'Presente', 'A': 'Ausente', 'T': 'Tarde', 'S': 'Suspendido', 'J': 'Justificado'}
+                ws.write(i, 1, mapa.get(h['status'], h['status']), cell)
+                
+            workbook.close()
+            output.seek(0)
+            return output
+        except Exception as e:
+            print(f"[DEBUG EXCEL] ERROR INDIVIDUAL: {e}")
+            return None
 
 # ==============================================================================
 # CAPA 4: VISTAS (FRONTEND)
@@ -548,41 +555,47 @@ def view_curso(page: ft.Page):
     file_picker = ft.FilePicker(on_result=lambda e: save_file_result(e))
     page.overlay.append(file_picker)
     
-    # Variables temporales para el rango de fechas seleccionado
     export_range = {"start": "", "end": ""}
 
     def save_file_result(e: ft.FilePickerResultEvent):
+        print(f"[DEBUG EXCEL] Dialog result: {e.path}")
         if e.path:
             try:
-                # Usamos las fechas guardadas
                 excel_data = ReportService.generate_excel_curso(cid, export_range["start"], export_range["end"])
                 if excel_data:
                     with open(e.path, "wb") as f: f.write(excel_data.read())
                     UIHelper.show_snack(page, "Archivo guardado exitosamente.")
                 else: UIHelper.show_snack(page, "Error al generar Excel", True)
-            except Exception as ex: UIHelper.show_snack(page, f"Error: {ex}", True)
+            except Exception as ex: 
+                print(f"[DEBUG EXCEL] Error escritura: {ex}")
+                UIHelper.show_snack(page, f"Error: {ex}", True)
 
     def open_export_dlg(e):
-        # Fechas por defecto (Mes actual)
         today = date.today()
         first_day = today.replace(day=1)
         
-        tf_start = ft.TextField(label="Inicio (YYYY-MM-DD)", value=first_day.isoformat(), width=150)
-        tf_end = ft.TextField(label="Fin (YYYY-MM-DD)", value=today.isoformat(), width=150)
+        tf_start = ft.TextField(label="Inicio (YYYY-MM-DD)", value=first_day.isoformat())
+        tf_end = ft.TextField(label="Fin (YYYY-MM-DD)", value=today.isoformat())
         
         def confirm_export(e):
+            print(f"[DEBUG EXCEL] Exportando Curso ID {cid} de {tf_start.value} a {tf_end.value}")
             export_range["start"] = tf_start.value
             export_range["end"] = tf_end.value
             fname = f"Reporte_{cn}_{tf_start.value}_al_{tf_end.value}.xlsx"
             page.close(dlg)
             file_picker.save_file(file_name=fname)
             
+        # FIX VISUAL: Usamos Column en vez de Row para que entre bien
         dlg = ft.AlertDialog(
             title=ft.Text("Exportar Asistencia"),
-            content=ft.Column([
-                ft.Text("Seleccione el período a exportar:"),
-                ft.Row([tf_start, tf_end])
-            ], height=100),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text("Seleccione el período:", size=12),
+                    tf_start,
+                    tf_end
+                ], tight=True), # 'tight' hace que ocupe lo mínimo necesario
+                width=300
+            ),
             actions=[
                 ft.TextButton("Cancelar", on_click=lambda e: page.close(dlg)),
                 ft.ElevatedButton("Descargar Excel", on_click=confirm_export, bgcolor="green", color="white")
@@ -692,7 +705,7 @@ def view_curso(page: ft.Page):
     
     actions_header = [
         ft.ElevatedButton("Docs", color="white", bgcolor="orange", on_click=open_reqs_dlg),
-        ft.ElevatedButton("Excel", color="white", bgcolor="green", on_click=open_export_dlg) # Llama al dialogo
+        ft.ElevatedButton("Excel", color="white", bgcolor="green", on_click=open_export_dlg)
     ]
     
     fab_save = ft.FloatingActionButton(
@@ -792,7 +805,15 @@ def view_student_detail(page: ft.Page):
             page.close(dlg)
             file_picker.save_file(file_name=f"Informe_{alumno['nombre']}.xlsx")
             
-        dlg = ft.AlertDialog(title=ft.Text("Exportar Historial"), content=ft.Row([tf_start, tf_end]), actions=[ft.ElevatedButton("Descargar", on_click=confirm)])
+        # FIX VISUAL: Column para que no se rompa en mobile
+        dlg = ft.AlertDialog(
+            title=ft.Text("Exportar Historial"),
+            content=ft.Container(
+                content=ft.Column([ft.Text("Período:"), tf_start, tf_end], tight=True),
+                width=300
+            ),
+            actions=[ft.ElevatedButton("Descargar", on_click=confirm)]
+        )
         page.open(dlg)
 
     # --- BLOQUE 1: CABECERA Y DATOS ---
