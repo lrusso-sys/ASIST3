@@ -6,19 +6,19 @@ from datetime import date, datetime
 import os
 import threading
 import io
-import base64 # Importante para la descarga directa
+import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v8.0 (Full Export Fix) ---", flush=True)
+print("--- Oñepyrũ aplicación v8.1 (Smart Auto-Presente) ---", flush=True)
 
 try:
     import xlsxwriter
-    print("✅ Librería XlsxWriter detectada correctamente.")
+    print("✅ Librería XlsxWriter detectada.")
 except ImportError:
     xlsxwriter = None
-    print("⚠️ URGENTE: XlsxWriter NO está instalado. Agregalo a requirements.txt")
+    print("⚠️ URGENTE: XlsxWriter NO está instalado.")
 
-# --- CONFIGURACIÓN UI (Constantes) ---
+# --- CONFIGURACIÓN UI ---
 THEME = {
     "primary": "indigo",
     "on_primary": "white",
@@ -425,7 +425,7 @@ class ReportService:
             
             for i, h in enumerate(historial, start=11):
                 ws.write(i, 0, h['fecha'], cell)
-                mapa = {'P': 'Presente', 'A': 'Ausente', 'T': 'Tarde', 'S': 'Suspendido', 'J': 'Justificado'}
+                mapa = {'P': 'Presente', 'A': 'Ausente', 'T': 'Tarde', 'S': 'Suspendido', 'J': 'Justificado', 'N': 'No Corresp.'}
                 ws.write(i, 1, mapa.get(h['status'], h['status']), cell)
                 
             workbook.close()
@@ -540,27 +540,20 @@ def view_curso(page: ft.Page):
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
     
-    # --- EXPORTADOR DIRECTO (FIX) ---
+    # --- EXPORTADOR DIRECTO ---
     def download_excel(e):
         start = export_range["start"]
         end = export_range["end"]
-        
         try:
             excel_data = ReportService.generate_excel_curso(cid, start, end)
-            
             if excel_data:
-                # TRUCO: Descarga directa con Base64 para evitar error de FilePicker
                 b64_data = base64.b64encode(excel_data.getvalue()).decode()
                 filename = f"Reporte_{cn}_{start}_{end}.xlsx"
-                
-                # Lanzar URL de datos
                 page.launch_url(f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_data}")
-                
                 page.close(dlg)
-                UIHelper.show_snack(page, "📥 Descarga iniciada (revisá tus descargas)")
+                UIHelper.show_snack(page, "📥 Descarga iniciada.")
             else:
                 UIHelper.show_snack(page, "Error: El reporte está vacío.", True)
-                
         except Exception as ex:
             UIHelper.show_snack(page, f"Error: {ex}", True)
 
@@ -569,7 +562,6 @@ def view_curso(page: ft.Page):
     def open_export_dlg(e):
         today = date.today()
         first_day = today.replace(day=1)
-        
         tf_start = ft.TextField(label="Inicio (YYYY-MM-DD)", value=first_day.isoformat())
         tf_end = ft.TextField(label="Fin (YYYY-MM-DD)", value=today.isoformat())
         
@@ -679,8 +671,32 @@ def view_curso(page: ft.Page):
             asist_col.controls.append(ft.Container(content=ft.Row([ft.Text(a['nombre'], expand=True, weight="w500"), dd]), padding=5, border=ft.border.only(bottom=ft.border.BorderSide(1, "grey200"))))
         page.update()
     
+    # --- FIX: GUARDADO INTELIGENTE DE "NO TOCADOS" ---
     def guardar_asistencia_manual(e):
-        UIHelper.show_snack(page, "✅ Asistencia guardada correctamente.")
+        fecha = date_tf.value
+        alumnos = SchoolService.get_alumnos(cid)
+        # Obtenemos qué hay guardado en la DB ahora mismo
+        status_map = AttendanceService.get_day_status(cid, fecha)
+        
+        try:
+            d_obj = date.fromisoformat(fecha)
+            dia_sem = d_obj.weekday()
+        except: dia_sem = -1
+
+        count_fixed = 0
+        for a in alumnos:
+            # Si el alumno NO está en la DB, es porque quedó con el valor por defecto en pantalla
+            # pero no se disparó el evento de guardado. Lo guardamos ahora.
+            if a['id'] not in status_map:
+                def_val = "P" # Por defecto es Presente
+                if a['tpp'] == 1 and a['tpp_dias']:
+                    if str(dia_sem) not in a['tpp_dias'].split(','): 
+                        def_val = "N" # Salvo que sea TPP y no le toque venir
+                
+                AttendanceService.mark(a['id'], fecha, def_val)
+                count_fixed += 1
+        
+        UIHelper.show_snack(page, f"✅ Asistencia completada ({count_fixed} automáticos).")
         page.go("/dashboard")
 
     tabs = ft.Tabs(selected_index=0, tabs=[
@@ -772,7 +788,7 @@ def view_student_detail(page: ft.Page):
     stats = AttendanceService.get_stats(aid)
     history = AttendanceService.get_history(aid)
     
-    # --- EXPORTAR INDIVIDUAL (FIX) ---
+    # --- EXPORTAR INDIVIDUAL (FIX DIRECTO) ---
     export_range_ind = {"start": "", "end": ""}
 
     def download_individual(e):
@@ -782,7 +798,6 @@ def view_student_detail(page: ft.Page):
             excel_data = ReportService.generate_excel_alumno(aid, start, end)
             if excel_data:
                 b64_data = base64.b64encode(excel_data.getvalue()).decode()
-                # Lanzar descarga directa
                 page.launch_url(f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_data}")
                 page.close(dlg)
                 UIHelper.show_snack(page, "📥 Informe individual descargado.")
@@ -995,8 +1010,7 @@ if __name__ == "__main__":
     if port_env:
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
     else:
-        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
-        
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)        
 # ==============================================================================
 # 🧨 ZONA DE LIMPIEZA V5 (REQUERIDO PARA ACTIVAR LOS NUEVOS CAMBIOS)
 # ==============================================================================
