@@ -7,7 +7,7 @@ import os
 import threading
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación (Iniciando) ---", flush=True)
+print("--- Oñepyrũ aplicación v4.0 (Features) ---", flush=True)
 
 # --- CONFIGURACIÓN UI (Constantes) ---
 THEME = {
@@ -46,7 +46,6 @@ class UIHelper:
 
     @staticmethod
     def create_header(title, subtitle="", leading=None, actions=None):
-        # Manejo seguro del subtítulo
         if isinstance(subtitle, str):
             sub_control = ft.Text(subtitle, size=12, color="white70") if subtitle else ft.Container()
         elif isinstance(subtitle, ft.Control):
@@ -76,7 +75,7 @@ class Security:
         return hashlib.sha256(password.encode()).hexdigest()
 
 # ==============================================================================
-# CAPA 2: GESTIÓN DE BASE DE DATOS (PostgreSQL - FIX)
+# CAPA 2: GESTIÓN DE BASE DE DATOS
 # ==============================================================================
 
 class DatabaseManager:
@@ -99,7 +98,6 @@ class DatabaseManager:
                     database_url = database_url.replace('postgres://', 'postgresql://', 1)
                 return psycopg2.connect(database_url, sslmode='require')
             else:
-                # Fallback local
                 return psycopg2.connect(
                     host=os.environ.get('DB_HOST', 'localhost'),
                     port=os.environ.get('DB_PORT', '5432'),
@@ -116,10 +114,15 @@ class DatabaseManager:
         if not conn: return
         try:
             with conn.cursor() as cur:
+                # Tablas Base
                 cur.execute("CREATE TABLE IF NOT EXISTS Usuarios (id SERIAL PRIMARY KEY, username TEXT UNIQUE, password TEXT, role TEXT)")
                 cur.execute("CREATE TABLE IF NOT EXISTS Ciclos (id SERIAL PRIMARY KEY, nombre TEXT UNIQUE, activo INTEGER DEFAULT 0)")
                 cur.execute("CREATE TABLE IF NOT EXISTS Cursos (id SERIAL PRIMARY KEY, nombre TEXT, ciclo_id INTEGER REFERENCES Ciclos(id) ON DELETE CASCADE)")
                 
+                # Relación Usuario-Curso (NUEVO)
+                cur.execute("CREATE TABLE IF NOT EXISTS Usuario_Cursos (usuario_id INTEGER REFERENCES Usuarios(id) ON DELETE CASCADE, curso_id INTEGER REFERENCES Cursos(id) ON DELETE CASCADE, PRIMARY KEY (usuario_id, curso_id))")
+
+                # Alumnos y Asistencia
                 cur.execute("""CREATE TABLE IF NOT EXISTS Alumnos (
                     id SERIAL PRIMARY KEY, 
                     curso_id INTEGER REFERENCES Cursos(id) ON DELETE CASCADE, 
@@ -132,15 +135,18 @@ class DatabaseManager:
                     tpp_dias TEXT, 
                     UNIQUE(curso_id, nombre)
                 )""")
-                
                 cur.execute("CREATE TABLE IF NOT EXISTS Asistencia (id SERIAL PRIMARY KEY, alumno_id INTEGER REFERENCES Alumnos(id) ON DELETE CASCADE, fecha TEXT, status TEXT, UNIQUE(alumno_id, fecha))")
 
-                # Admin por defecto
+                # Documentación (NUEVO)
+                cur.execute("CREATE TABLE IF NOT EXISTS Requisitos (id SERIAL PRIMARY KEY, descripcion TEXT UNIQUE)") # Requisitos globales
+                cur.execute("CREATE TABLE IF NOT EXISTS Documentacion_Alumno (requisito_id INTEGER REFERENCES Requisitos(id) ON DELETE CASCADE, alumno_id INTEGER REFERENCES Alumnos(id) ON DELETE CASCADE, entregado INTEGER DEFAULT 0, PRIMARY KEY (requisito_id, alumno_id))")
+
+                # Admin Default
                 cur.execute("SELECT COUNT(*) FROM Usuarios")
                 if cur.fetchone()[0] == 0:
                     cur.execute("INSERT INTO Usuarios (username, password, role) VALUES (%s, %s, %s)", ("admin", Security.hash_password("admin"), "admin"))
             conn.commit()
-            print("✅ DB PostgreSQL Inicializada.")
+            print("✅ DB PostgreSQL Estructura OK.")
         except Exception as e:
             print(f"❌ Error Init DB: {e}")
         finally:
@@ -167,8 +173,7 @@ class DatabaseManager:
                 row = cur.fetchone()
                 return dict(row) if row else None
         except Exception as e:
-            # FIX: Imprimir el error real en lugar de silenciarlo
-            print(f"❌ Error Fetch One: {e} | Query: {query}")
+            print(f"❌ Error Fetch One: {e}")
             return None
         finally: conn.close()
 
@@ -181,88 +186,13 @@ class DatabaseManager:
             conn.commit()
             return True
         except Exception as e:
-            print(f"❌ Error Execute: {e} | Query: {query}")
+            print(f"❌ Error Execute: {e}")
             conn.rollback()
             return False
         finally: conn.close()
 
 db = DatabaseManager()
 
-# ==============================================================================
-# 🧨 ZONA DE LIMPIEZA (SOLO PARA ARREGLAR LA DB)
-# ==============================================================================
-"""print("--- 🧹 INICIANDO LIMPIEZA PROFUNDA DE BASE DE DATOS ---")
-try:
-    # Obtenemos conexión directa para tareas administrativas
-    conn_fix = db.get_connection()
-    if conn_fix:
-        with conn_fix.cursor() as cur:
-            # 1. Borramos TODAS las tablas existentes (CASCADE elimina las relaciones)
-            cur.execute("DROP TABLE IF EXISTS Asistencia CASCADE")
-            cur.execute("DROP TABLE IF EXISTS Alumnos CASCADE") 
-            cur.execute("DROP TABLE IF EXISTS Cursos CASCADE")
-            cur.execute("DROP TABLE IF EXISTS Ciclos CASCADE")
-            cur.execute("DROP TABLE IF EXISTS Requisitos_Cumplidos CASCADE")
-            cur.execute("DROP TABLE IF EXISTS Requisitos CASCADE")
-            # Opcional: Borrar usuarios si querés reiniciar el admin
-            # cur.execute("DROP TABLE IF EXISTS Usuarios CASCADE") 
-            
-            conn_fix.commit()
-        conn_fix.close()
-        print("✅ TABLAS BORRADAS CORRECTAMENTE.")
-        
-        # 2. Forzamos a crear las tablas nuevas con la estructura CORRECTA
-        print("🔨 RE-CREANDO ESTRUCTURA...")
-        db._init_db_structure()
-        
-        # 3. Creamos el ciclo 2026 y lo activamos automáticamente para que no reniegues
-        conn_fix = db.get_connection()
-        with conn_fix.cursor() as cur:
-            # Verificamos si ya se creó el ciclo en el init (a veces pasa)
-            cur.execute("SELECT count(*) FROM Ciclos WHERE nombre='2026'")
-            if cur.fetchone()[0] == 0:
-                cur.execute("INSERT INTO Ciclos (nombre, activo) VALUES ('2026', 1)")
-                conn_fix.commit()
-                print("✨ CICLO 2026 CREADO Y ACTIVADO MÁGICAMENTE.")
-        conn_fix.close()
-        
-    else:
-        print("❌ NO SE PUDO CONECTAR PARA LIMPIAR.")
-except Exception as e:
-    print(f"❌ ERROR EN LIMPIEZA: {e}")
-print("=================================================================")"""
-
-# --- BLOQUE DE DIAGNÓSTICO TEMPORAL ---
-# Pega esto justo debajo de: db = DatabaseManager()
-
-print("--- INICIANDO DIAGNÓSTICO DB ---")
-try:
-    # 1. Probar conexión
-    conn_test = db.get_connection()
-    if conn_test:
-        print("✅ Conexión a Base de Datos: EXITOSA")
-        cur_test = conn_test.cursor()
-        
-        # 2. Ver tablas existentes
-        cur_test.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
-        tablas = cur_test.fetchall()
-        print(f"📂 Tablas encontradas: {tablas}")
-
-        # 3. Ver contenido de Ciclos
-        try:
-            cur_test.execute("SELECT * FROM Ciclos")
-            ciclos = cur_test.fetchall()
-            print(f"📅 Contenido de tabla CICLOS: {ciclos}")
-        except Exception as e:
-            print(f"❌ Error leyendo tabla Ciclos: {e}")
-
-        conn_test.close()
-    else:
-        print("❌ FALLO TOTAL: No se pudo conectar a la DB (conn es None)")
-except Exception as e:
-    print(f"❌ ERROR CRÍTICO EN DIAGNÓSTICO: {e}")
-print("--- FIN DIAGNÓSTICO ---")
-# ----------------------------------------
 # ==============================================================================
 # CAPA 3: SERVICIOS DE NEGOCIO
 # ==============================================================================
@@ -280,15 +210,25 @@ class UserService:
     def add_user(u, p, r): return db.execute("INSERT INTO Usuarios (username, password, role) VALUES (%s, %s, %s)", (u, Security.hash_password(p), r))
     @staticmethod
     def delete_user(uid): return db.execute("DELETE FROM Usuarios WHERE id = %s", (uid,))
+    
+    # --- NUEVO: Asignación de Cursos ---
+    @staticmethod
+    def get_user_cursos(uid):
+        rows = db.fetch_all("SELECT curso_id FROM Usuario_Cursos WHERE usuario_id = %s", (uid,))
+        return [r['curso_id'] for r in rows]
+
+    @staticmethod
+    def toggle_user_curso(uid, cid, assign):
+        if assign:
+            db.execute("INSERT INTO Usuario_Cursos (usuario_id, curso_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (uid, cid))
+        else:
+            db.execute("DELETE FROM Usuario_Cursos WHERE usuario_id = %s AND curso_id = %s", (uid, cid))
 
 class SchoolService:
     @staticmethod
     def get_ciclos(): return db.fetch_all("SELECT * FROM Ciclos ORDER BY nombre DESC")
-    
     @staticmethod
-    def get_ciclo_activo(): 
-        # FIX: Query simplificada y segura
-        return db.fetch_one("SELECT * FROM Ciclos WHERE activo = 1 LIMIT 1")
+    def get_ciclo_activo(): return db.fetch_one("SELECT * FROM Ciclos WHERE activo = 1 LIMIT 1")
     
     @staticmethod
     def add_ciclo(nombre):
@@ -307,20 +247,33 @@ class SchoolService:
         try:
             with conn.cursor() as cur:
                 cur.execute("UPDATE Ciclos SET activo = 0")
-                # FIX: Convertir a int explícitamente
                 cur.execute("UPDATE Ciclos SET activo = 1 WHERE id = %s", (int(cid),))
             conn.commit()
-            print(f"Ciclo {cid} activado.")
-        except Exception as e:
-            print(f"Error activando ciclo: {e}")
-            conn.rollback()
         finally: conn.close()
     
     @staticmethod
     def delete_ciclo(cid): return db.execute("DELETE FROM Ciclos WHERE id = %s", (cid,))
 
+    # --- NUEVO: Cursos filtrados por usuario ---
     @staticmethod
-    def get_cursos_activos():
+    def get_cursos_activos(user_id=None, role=None):
+        ciclo = SchoolService.get_ciclo_activo()
+        if not ciclo: return []
+        
+        # Si es admin, ve todo. Si no, solo los asignados.
+        if role == 'admin':
+            return db.fetch_all("SELECT * FROM Cursos WHERE ciclo_id = %s ORDER BY nombre", (ciclo['id'],))
+        else:
+            return db.fetch_all("""
+                SELECT c.* FROM Cursos c
+                JOIN Usuario_Cursos uc ON c.id = uc.curso_id
+                WHERE c.ciclo_id = %s AND uc.usuario_id = %s
+                ORDER BY c.nombre
+            """, (ciclo['id'], user_id))
+            
+    @staticmethod
+    def get_cursos_all_active():
+        # Para el admin panel, ver todos los cursos del ciclo activo para asignar
         ciclo = SchoolService.get_ciclo_activo()
         if not ciclo: return []
         return db.fetch_all("SELECT * FROM Cursos WHERE ciclo_id = %s ORDER BY nombre", (ciclo['id'],))
@@ -339,8 +292,7 @@ class SchoolService:
         """, (aid,))
 
     @staticmethod
-    def add_curso(nombre, ciclo_id): 
-        return db.execute("INSERT INTO Cursos (nombre, ciclo_id) VALUES (%s, %s)", (nombre, ciclo_id))
+    def add_curso(nombre, ciclo_id): return db.execute("INSERT INTO Cursos (nombre, ciclo_id) VALUES (%s, %s)", (nombre, ciclo_id))
     
     @staticmethod
     def add_alumno(data):
@@ -351,6 +303,33 @@ class SchoolService:
     def update_alumno(aid, data):
         return db.execute("UPDATE Alumnos SET nombre=%s, dni=%s, observaciones=%s, tutor_nombre=%s, tutor_telefono=%s, tpp=%s, tpp_dias=%s WHERE id=%s", 
                           (data['nombre'], data['dni'], data['obs'], data['tn'], data['tt'], data['tpp'], data['tpp_dias'], aid))
+
+class DocService:
+    """Manejo de Requisitos y Documentación."""
+    @staticmethod
+    def get_requisitos():
+        return db.fetch_all("SELECT * FROM Requisitos ORDER BY descripcion")
+    
+    @staticmethod
+    def add_requisito(desc):
+        return db.execute("INSERT INTO Requisitos (descripcion) VALUES (%s) ON CONFLICT DO NOTHING", (desc,))
+    
+    @staticmethod
+    def delete_requisito(rid):
+        return db.execute("DELETE FROM Requisitos WHERE id = %s", (rid,))
+    
+    @staticmethod
+    def get_estado_alumno(aid):
+        # Devuelve dict {req_id: entregado (1/0)}
+        rows = db.fetch_all("SELECT requisito_id, entregado FROM Documentacion_Alumno WHERE alumno_id = %s", (aid,))
+        return {r['requisito_id']: r['entregado'] for r in rows}
+    
+    @staticmethod
+    def toggle_entrega(aid, rid, estado):
+        if estado:
+            db.execute("INSERT INTO Documentacion_Alumno (requisito_id, alumno_id, entregado) VALUES (%s, %s, 1) ON CONFLICT (requisito_id, alumno_id) DO UPDATE SET entregado=1", (rid, aid))
+        else:
+            db.execute("UPDATE Documentacion_Alumno SET entregado=0 WHERE requisito_id=%s AND alumno_id=%s", (rid, aid))
 
 class AttendanceService:
     @staticmethod
@@ -399,9 +378,7 @@ def view_login(page: ft.Page):
         ft.Container(
             content=ft.Column([
                 ft.Icon("school_rounded", size=80, color=THEME["primary"]),
-                ft.Text("Sistema de Asistencia", size=28, weight="bold", color=THEME["secondary"]),
-                ft.Text("UNSAM", size=16, color="grey"),
-                ft.Divider(height=30, color="transparent"),
+                ft.Text("Asistencia UNSAM", size=28, weight="bold", color=THEME["secondary"]),
                 UIHelper.create_card(ft.Column([
                     user_tf, ft.Container(height=10), pass_tf, ft.Container(height=20),
                     ft.ElevatedButton("INGRESAR", on_click=login, width=300, height=50, bgcolor=THEME["primary"], color="white")
@@ -419,21 +396,22 @@ def view_dashboard(page: ft.Page):
     grid = ft.GridView(runs_count=2, max_extent=400, child_aspect_ratio=2.5, spacing=15, run_spacing=15)
     
     def load():
-        # Consultar ciclo activo
         ciclo = SchoolService.get_ciclo_activo()
         grid.controls.clear()
         
         if not ciclo:
             txt_ciclo.value = "⚠️ SIN CICLO ACTIVO"
             txt_ciclo.color = "#FFCDD2"
-            grid.controls.append(ft.Text("No hay ciclo lectivo activo. Ve a Configuración (Tuerca).", italic=True, color="red", size=16))
+            grid.controls.append(ft.Text("No hay ciclo lectivo activo. Ve a Configuración.", italic=True, color="red", size=16))
         else:
             txt_ciclo.value = f"Ciclo: {ciclo['nombre']}"
             txt_ciclo.color = "white"
-            cursos = SchoolService.get_cursos_activos()
+            # FIX: Pasar usuario y rol para filtrar
+            cursos = SchoolService.get_cursos_activos(user['id'], user['role'])
             
             if not cursos:
-                grid.controls.append(ft.Text("No hay cursos en este ciclo.", italic=True, color="grey"))
+                msg = "No tenés cursos asignados." if user['role'] != 'admin' else "No hay cursos en este ciclo."
+                grid.controls.append(ft.Text(msg, italic=True, color="grey"))
 
             for c in cursos:
                 def go(e, cid=c['id'], cn=c['nombre']):
@@ -448,9 +426,7 @@ def view_dashboard(page: ft.Page):
                         ft.IconButton("arrow_forward_ios", icon_color=THEME["primary"], on_click=go)
                     ], alignment="spaceBetween"), padding=15, on_click=go
                 ))
-        # FIX: NO llamamos a page.update() aquí. Dejamos que el router pinte la vista.
 
-    # Ejecutar carga
     load()
 
     actions = [ft.IconButton("logout", icon_color="white", on_click=lambda _: page.go("/"))]
@@ -461,28 +437,18 @@ def view_dashboard(page: ft.Page):
     if user['role'] == "admin":
         def add_curso_dlg(e):
             ciclo_actual = SchoolService.get_ciclo_activo()
-            
-            # --- CORRECCIÓN AQUÍ ---
             if not ciclo_actual: 
-                # Eliminamos 'page.close(dlg)' porque dlg no existe aún.
                 return UIHelper.show_snack(page, "Debe activar un ciclo primero", True)
-            # -----------------------
             
             tf_nombre = ft.TextField(label="Nombre del Curso")
-            
             def save_curso(e):
                 if tf_nombre.value:
                     if SchoolService.add_curso(tf_nombre.value, ciclo_actual['id']):
-                        page.close(dlg)
-                        load()
-                        page.update()
-                        UIHelper.show_snack(page, "Curso creado")
-                    else: 
-                        UIHelper.show_snack(page, "Error al crear", True)
+                        page.close(dlg); load(); page.update(); UIHelper.show_snack(page, "Curso creado")
+                    else: UIHelper.show_snack(page, "Error al crear", True)
             
             dlg = ft.AlertDialog(title=ft.Text("Nuevo Curso"), content=tf_nombre, actions=[ft.TextButton("Guardar", on_click=save_curso)])
             page.open(dlg)
-            
         fab = ft.FloatingActionButton(icon="add", on_click=add_curso_dlg, bgcolor=THEME["primary"])
         
     return ft.View("/dashboard", [
@@ -599,6 +565,7 @@ def view_student_detail(page: ft.Page):
     stats = AttendanceService.get_stats(aid)
     history = AttendanceService.get_history(aid)
     
+    # --- Tab Info ---
     info_col = ft.Column([
         ft.Text(f"Nombre: {alumno['nombre']}", size=18, weight="bold"),
         ft.Text(f"DNI: {alumno['dni'] or '-'}"),
@@ -614,13 +581,32 @@ def view_student_detail(page: ft.Page):
     ], spacing=10)
     
     hist_col = ft.Column([ft.Text(f"{h['fecha']}: {h['status']}", size=12) for h in history[:10]], scroll="auto", height=200)
-    
+
+    # --- NUEVO: Tab Documentación ---
+    docs_col = ft.Column(scroll="auto")
+    def load_docs():
+        docs_col.controls.clear()
+        reqs = DocService.get_requisitos()
+        estados = DocService.get_estado_alumno(aid)
+        
+        if not reqs:
+            docs_col.controls.append(ft.Text("No hay requisitos definidos. (Pedir a Admin)", italic=True))
+        
+        for r in reqs:
+            is_checked = estados.get(r['id']) == 1
+            cb = ft.Checkbox(label=r['descripcion'], value=is_checked, on_change=lambda e, rid=r['id']: (DocService.toggle_entrega(aid, rid, e.control.value), UIHelper.show_snack(page, "Actualizado")))
+            docs_col.controls.append(cb)
+        page.update()
+
+    tabs = ft.Tabs(selected_index=0, on_change=lambda e: load_docs() if e.control.selected_index == 2 else None, tabs=[
+        ft.Tab(text="Info", content=ft.Container(content=info_col, padding=20)),
+        ft.Tab(text="Historial", content=ft.Container(content=ft.Column([stats_row, ft.Divider(), hist_col]), padding=20)),
+        ft.Tab(text="Documentación", content=ft.Container(content=docs_col, padding=20)),
+    ])
+
     return ft.View("/student_detail", [
         UIHelper.create_header(alumno['nombre'], "Detalle", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso"))),
-        ft.Container(content=ft.Column([stats_row, ft.Divider(), ft.Tabs(tabs=[
-            ft.Tab(text="Info", content=ft.Container(content=info_col, padding=20)),
-            ft.Tab(text="Historial", content=ft.Container(content=hist_col, padding=20))
-        ])]), padding=20, bgcolor=THEME["bg"], expand=True)
+        ft.Container(content=tabs, padding=20, bgcolor=THEME["bg"], expand=True)
     ])
 
 def view_admin(page: ft.Page):
@@ -628,7 +614,30 @@ def view_admin(page: ft.Page):
         UIHelper.create_header("Administración", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard"))),
         ft.Container(content=ft.Column([
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("calendar_month", color=THEME["primary"]), title=ft.Text("Ciclos Lectivos"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/ciclos"))),
-            UIHelper.create_card(ft.ListTile(leading=ft.Icon("people", color=THEME["primary"]), title=ft.Text("Usuarios"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/users")))
+            UIHelper.create_card(ft.ListTile(leading=ft.Icon("people", color=THEME["primary"]), title=ft.Text("Usuarios"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/users"))),
+            UIHelper.create_card(ft.ListTile(leading=ft.Icon("folder", color=THEME["primary"]), title=ft.Text("Requisitos Documentación"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/docs")))
+        ]), padding=20, bgcolor=THEME["bg"], expand=True)
+    ])
+
+def view_docs_admin(page: ft.Page):
+    tf = ft.TextField(label="Nuevo Requisito (ej: Ficha Médica)")
+    col = ft.Column()
+    
+    def load():
+        col.controls.clear()
+        for r in DocService.get_requisitos():
+            col.controls.append(ft.ListTile(title=ft.Text(r['descripcion']), trailing=ft.IconButton("delete", icon_color="red", on_click=lambda e, rid=r['id']: (DocService.delete_requisito(rid), load(), page.update()))))
+        page.update()
+    
+    def add(e):
+        if tf.value: DocService.add_requisito(tf.value); tf.value=""; load()
+    
+    load()
+    return ft.View("/docs", [
+        UIHelper.create_header("Documentación", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/admin"))),
+        ft.Container(content=ft.Column([
+            ft.Row([tf, ft.ElevatedButton("Agregar", on_click=add)]),
+            ft.Divider(), col
         ]), padding=20, bgcolor=THEME["bg"], expand=True)
     ])
 
@@ -640,7 +649,6 @@ def view_ciclos(page: ft.Page):
         col.controls.clear()
         for c in SchoolService.get_ciclos():
             is_active = c['activo'] == 1
-            # Botón Activar
             if is_active:
                 act_btn = ft.Container(content=ft.Text("ACTIVO", color="white", size=10, weight="bold"), bgcolor="green", padding=5, border_radius=5)
             else:
@@ -672,11 +680,39 @@ def view_users(page: ft.Page):
     u = ft.TextField(label="Usuario"); p = ft.TextField(label="Clave", password=True); r = ft.Dropdown(value="preceptor", options=[ft.dropdown.Option("admin"), ft.dropdown.Option("preceptor")])
     col = ft.Column(scroll="auto")
     
+    # --- Diálogo para asignar cursos ---
+    def open_assign_dlg(uid, username):
+        cursos = SchoolService.get_cursos_all_active()
+        assigned = UserService.get_user_cursos(uid)
+        
+        checks_col = ft.Column(scroll="auto", height=300)
+        
+        for c in cursos:
+            is_checked = c['id'] in assigned
+            cb = ft.Checkbox(label=c['nombre'], value=is_checked, 
+                             on_change=lambda e, cid=c['id']: UserService.toggle_user_curso(uid, cid, e.control.value))
+            checks_col.controls.append(cb)
+            
+        dlg = ft.AlertDialog(title=ft.Text(f"Cursos para {username}"), content=checks_col)
+        page.open(dlg)
+
     def load():
         col.controls.clear()
         for us in UserService.get_users():
-            dele = ft.IconButton("delete", icon_color="red", on_click=lambda e, uid=us['id']: (UserService.delete_user(uid), load(), page.update())) if us['username'] != page.session.get("user")['username'] else None
-            col.controls.append(UIHelper.create_card(ft.ListTile(leading=ft.Icon("person"), title=ft.Text(us['username']), subtitle=ft.Text(us['role']), trailing=dele), padding=5))
+            # Botones de acción
+            actions = []
+            if us['role'] != 'admin':
+                actions.append(ft.IconButton("assignment_ind", icon_color="blue", tooltip="Asignar Cursos", on_click=lambda e, uid=us['id'], un=us['username']: open_assign_dlg(uid, un)))
+            
+            if us['username'] != page.session.get("user")['username']:
+                actions.append(ft.IconButton("delete", icon_color="red", tooltip="Eliminar", on_click=lambda e, uid=us['id']: (UserService.delete_user(uid), load(), page.update())))
+            
+            col.controls.append(UIHelper.create_card(ft.ListTile(
+                leading=ft.Icon("person"), 
+                title=ft.Text(us['username']), 
+                subtitle=ft.Text(us['role']), 
+                trailing=ft.Row(actions, tight=True)
+            ), padding=5))
 
     def add(e):
         if u.value and p.value:
@@ -709,12 +745,12 @@ def main(page: ft.Page):
         "/form_student": view_form_student,
         "/admin": view_admin,
         "/ciclos": view_ciclos,
-        "/users": view_users
+        "/users": view_users,
+        "/docs": view_docs_admin
     }
 
     def route_change(route):
         page.views.clear()
-        # Protección de rutas
         if page.route != "/" and not page.session.get("user"):
             page.route = "/"
         
@@ -741,47 +777,26 @@ if __name__ == "__main__":
     else:
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
 
-# --- AGREGAR ESTO AL FINAL DE main.py PARA DIAGNOSTICO ---
-def run_diagnostics():
-    print("\n--- 🕵️ DIAGNÓSTICO DE INICIO ---")
-    db_url = os.environ.get('DATABASE_URL')
-    
-    if not db_url:
-        print("❌ ERROR CRÍTICO: No se encontró la variable DATABASE_URL en el entorno.")
-        return
-
-    print(f"✅ DATABASE_URL detectada: {db_url[:15]}... (Oculta por seguridad)")
-    
-    try:
-        conn = psycopg2.connect(db_url, sslmode='require')
-        cur = conn.cursor()
-        
-        # 1. Ver si existe la tabla Ciclos
-        cur.execute("SELECT to_regclass('public.Ciclos');")
-        if cur.fetchone()[0] is None:
-            print("❌ La tabla 'Ciclos' NO EXISTE en esta base de datos.")
-        else:
-            print("✅ La tabla 'Ciclos' existe.")
-            
-            # 2. Ver qué hay dentro
-            cur.execute("SELECT * FROM Ciclos")
-            filas = cur.fetchall()
-            print(f"📊 Contenido de Ciclos: {filas}")
-            
-            if not filas:
-                print("⚠️ La tabla existe pero está VACÍA.")
-            else:
-                # 3. Buscar el activo
-                activos = [f for f in filas if f[2] == 1] # Asumiendo que 'activo' es la columna 3 (índice 2)
-                if activos:
-                    print(f"✅ Se encontró ciclo activo: {activos}")
-                else:
-                    print("⚠️ Hay ciclos, pero NINGUNO tiene activo=1.")
-
-        conn.close()
-    except Exception as e:
-        print(f"❌ ERROR DE CONEXIÓN O SQL: {e}")
-    print("--------------------------------\n")
-
-# Ejecutar diagnóstico antes de arrancar la app
-run_diagnostics()
+# ==============================================================================
+# 🧨 ZONA DE LIMPIEZA (SOLO SI SE ROMPE TODO - DESCOMENTAR SOLO 1 VEZ)
+# ==============================================================================
+# try:
+#     print("--- 🧹 LIMPIEZA DB (PRECAUCIÓN) ---")
+#     conn_fix = db.get_connection()
+#     if conn_fix:
+#         with conn_fix.cursor() as cur:
+#             # Borramos para recrear con las tablas nuevas (Usuario_Cursos, Requisitos, etc)
+#             cur.execute("DROP TABLE IF EXISTS Asistencia CASCADE")
+#             cur.execute("DROP TABLE IF EXISTS Alumnos CASCADE") 
+#             cur.execute("DROP TABLE IF EXISTS Cursos CASCADE")
+#             cur.execute("DROP TABLE IF EXISTS Ciclos CASCADE")
+#             cur.execute("DROP TABLE IF EXISTS Usuario_Cursos CASCADE") # Nueva tabla
+#             cur.execute("DROP TABLE IF EXISTS Requisitos CASCADE")     # Nueva tabla
+#             cur.execute("DROP TABLE IF EXISTS Documentacion_Alumno CASCADE") # Nueva tabla
+#             conn_fix.commit()
+#         conn_fix.close()
+#         print("✅ TABLAS BORRADAS.")
+#         print("🔨 RE-CREANDO ESTRUCTURA V4...")
+#         db._init_db_structure()
+# except Exception as e:
+#     print(f"❌ ERROR EN LIMPIEZA: {e}")
