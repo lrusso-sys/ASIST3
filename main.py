@@ -191,7 +191,7 @@ db = DatabaseManager()
 # ==============================================================================
 # 🧨 ZONA DE LIMPIEZA (SOLO PARA ARREGLAR LA DB)
 # ==============================================================================
-print("--- 🧹 INICIANDO LIMPIEZA PROFUNDA DE BASE DE DATOS ---")
+"""print("--- 🧹 INICIANDO LIMPIEZA PROFUNDA DE BASE DE DATOS ---")
 try:
     # Obtenemos conexión directa para tareas administrativas
     conn_fix = db.get_connection()
@@ -230,7 +230,7 @@ try:
         print("❌ NO SE PUDO CONECTAR PARA LIMPIAR.")
 except Exception as e:
     print(f"❌ ERROR EN LIMPIEZA: {e}")
-print("=================================================================")
+print("=================================================================")"""
 
 # --- BLOQUE DE DIAGNÓSTICO TEMPORAL ---
 # Pega esto justo debajo de: db = DatabaseManager()
