@@ -9,7 +9,7 @@ import io
 import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v8.1 (Smart Auto-Presente) ---", flush=True)
+print("--- Oñepyrũ aplicación v9.1 (Mobile Fix) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -204,6 +204,11 @@ class UserService:
     @staticmethod
     def delete_user(uid): return db.execute("DELETE FROM Usuarios WHERE id = %s", (uid,))
     
+    @staticmethod
+    def change_password(uid, new_password):
+        hashed = Security.hash_password(new_password)
+        return db.execute("UPDATE Usuarios SET password = %s WHERE id = %s", (hashed, uid))
+
     @staticmethod
     def get_user_cursos(uid):
         rows = db.fetch_all("SELECT curso_id FROM Usuario_Cursos WHERE usuario_id = %s", (uid,))
@@ -462,23 +467,24 @@ def view_login(page: ft.Page):
             ], horizontal_alignment="center"),
             alignment=ft.alignment.center, expand=True, bgcolor=THEME["bg"]
         )
-    ])
+    ], scroll="auto") # FIX SCROLL
 
 def view_dashboard(page: ft.Page):
     user = page.session.get("user")
     if not user: return view_login(page)
     
     txt_ciclo = ft.Text("Cargando...", weight="bold", color="white")
-    grid = ft.GridView(runs_count=2, max_extent=400, child_aspect_ratio=2.5, spacing=15, run_spacing=15)
+    # FIX MOBILE: ResponsiveRow en lugar de GridView
+    courses_container = ft.ResponsiveRow(spacing=15, run_spacing=15)
     
     def load():
         ciclo = SchoolService.get_ciclo_activo()
-        grid.controls.clear()
+        courses_container.controls.clear()
         
         if not ciclo:
             txt_ciclo.value = "⚠️ SIN CICLO ACTIVO"
             txt_ciclo.color = "#FFCDD2"
-            grid.controls.append(ft.Text("No hay ciclo lectivo activo.", italic=True, color="red"))
+            courses_container.controls.append(ft.Text("No hay ciclo lectivo activo.", italic=True, color="red"))
         else:
             txt_ciclo.value = f"Ciclo: {ciclo['nombre']}"
             txt_ciclo.color = "white"
@@ -486,13 +492,13 @@ def view_dashboard(page: ft.Page):
             
             if not cursos:
                 msg = "No tenés cursos asignados." if user['role'] != 'admin' else "No hay cursos."
-                grid.controls.append(ft.Text(msg, italic=True, color="grey"))
+                courses_container.controls.append(ft.Text(msg, italic=True, color="grey"))
 
             for c in cursos:
                 def go(e, cid=c['id'], cn=c['nombre']):
                     page.session.set("curso_id", cid); page.session.set("curso_nombre", cn); page.route = "/curso"; page.update()
                 
-                grid.controls.append(UIHelper.create_card(
+                card = UIHelper.create_card(
                     ft.Row([
                         ft.Row([
                             ft.Container(content=ft.Icon("class_", color="white"), bgcolor=THEME["primary"], border_radius=10, padding=12),
@@ -500,11 +506,42 @@ def view_dashboard(page: ft.Page):
                         ]),
                         ft.IconButton("arrow_forward_ios", icon_color=THEME["primary"], on_click=go)
                     ], alignment="spaceBetween"), padding=15, on_click=go
-                ))
+                )
+                # RESPONSIVE: En movil (xs) 12 columnas (ancho total), en pc (md) 6 columnas (mitad)
+                courses_container.controls.append(ft.Container(content=card, col={"xs": 12, "md": 6}))
 
     load()
 
-    actions = [ft.IconButton("logout", icon_color="white", on_click=lambda _: page.go("/"))]
+    # --- CAMBIO DE CONTRASEÑA ---
+    def open_pass_dlg(e):
+        p1 = ft.TextField(label="Nueva Contraseña", password=True, can_reveal_password=True)
+        p2 = ft.TextField(label="Repetir Contraseña", password=True)
+        
+        def save_pass(e):
+            if p1.value and p2.value:
+                if p1.value == p2.value:
+                    UserService.change_password(user['id'], p1.value)
+                    UIHelper.show_snack(page, "✅ Contraseña actualizada.")
+                    page.close(dlg)
+                else:
+                    p2.error_text = "No coinciden"
+                    p2.update()
+            else:
+                p1.error_text = "Completar campos"
+                p1.update()
+
+        dlg = ft.AlertDialog(
+            title=ft.Text("Cambiar Clave"),
+            content=ft.Column([p1, p2], tight=True, width=300),
+            actions=[ft.ElevatedButton("Confirmar", on_click=save_pass)]
+        )
+        page.open(dlg)
+
+    actions = [
+        ft.IconButton("key", icon_color="white", tooltip="Cambiar Clave", on_click=open_pass_dlg),
+        ft.IconButton("logout", icon_color="white", tooltip="Salir", on_click=lambda _: page.go("/"))
+    ]
+    
     if user['role'] == 'admin': 
         actions.insert(0, ft.IconButton("settings", icon_color="white", on_click=lambda _: page.go("/admin")))
 
@@ -531,9 +568,9 @@ def view_dashboard(page: ft.Page):
         ft.Container(content=ft.Column([
             ft.Text("Mis Cursos", size=22, weight="bold"),
             ft.Divider(height=10, color="transparent"),
-            grid
-        ], expand=True), padding=20, expand=True)
-    ], floating_action_button=fab)
+            courses_container
+        ]), padding=20) 
+    ], floating_action_button=fab, scroll="auto") # FIX SCROLL
 
 def view_curso(page: ft.Page):
     cid = page.session.get("curso_id")
@@ -628,7 +665,7 @@ def view_curso(page: ft.Page):
         page.open(dlg_reqs)
 
     # --- UI Principal ---
-    lv = ft.Column(scroll="auto", expand=True)
+    lv = ft.Column(scroll="auto", expand=True) # Scroll interno por las dudas
     def load_alumnos():
         lv.controls.clear()
         for a in SchoolService.get_alumnos(cid):
@@ -671,11 +708,10 @@ def view_curso(page: ft.Page):
             asist_col.controls.append(ft.Container(content=ft.Row([ft.Text(a['nombre'], expand=True, weight="w500"), dd]), padding=5, border=ft.border.only(bottom=ft.border.BorderSide(1, "grey200"))))
         page.update()
     
-    # --- FIX: GUARDADO INTELIGENTE DE "NO TOCADOS" ---
+    # GUARDADO INTELIGENTE
     def guardar_asistencia_manual(e):
         fecha = date_tf.value
         alumnos = SchoolService.get_alumnos(cid)
-        # Obtenemos qué hay guardado en la DB ahora mismo
         status_map = AttendanceService.get_day_status(cid, fecha)
         
         try:
@@ -685,13 +721,11 @@ def view_curso(page: ft.Page):
 
         count_fixed = 0
         for a in alumnos:
-            # Si el alumno NO está en la DB, es porque quedó con el valor por defecto en pantalla
-            # pero no se disparó el evento de guardado. Lo guardamos ahora.
             if a['id'] not in status_map:
-                def_val = "P" # Por defecto es Presente
+                def_val = "P" 
                 if a['tpp'] == 1 and a['tpp_dias']:
                     if str(dia_sem) not in a['tpp_dias'].split(','): 
-                        def_val = "N" # Salvo que sea TPP y no le toque venir
+                        def_val = "N" 
                 
                 AttendanceService.mark(a['id'], fecha, def_val)
                 count_fixed += 1
@@ -741,7 +775,7 @@ def view_curso(page: ft.Page):
     return ft.View("/curso", [
         UIHelper.create_header(cn, "Gestión", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard")), actions=actions_header),
         ft.Container(content=tabs, expand=True, bgcolor=THEME["bg"])
-    ], floating_action_button=fab_save)
+    ], floating_action_button=fab_save, scroll="auto") # FIX SCROLL
 
 def view_form_student(page: ft.Page):
     cid = page.session.get("curso_id"); aid = page.session.get("alumno_id_edit"); is_edit = aid is not None
@@ -776,8 +810,8 @@ def view_form_student(page: ft.Page):
             ft.Container(content=ft.Column([sw_tpp, cont_days]), bgcolor="blue50", padding=10, border_radius=10),
             ft.Container(height=10),
             ft.ElevatedButton("Guardar", on_click=save, width=float("inf"), bgcolor=THEME["primary"], color="white")
-        ])), padding=20, bgcolor=THEME["bg"], expand=True)
-    ])
+        ])), padding=20, bgcolor=THEME["bg"], expand=True) # expand ayuda al scroll interno
+    ], scroll="auto") # FIX SCROLL
 
 def view_student_detail(page: ft.Page):
     aid = page.session.get("alumno_id")
@@ -788,7 +822,7 @@ def view_student_detail(page: ft.Page):
     stats = AttendanceService.get_stats(aid)
     history = AttendanceService.get_history(aid)
     
-    # --- EXPORTAR INDIVIDUAL (FIX DIRECTO) ---
+    # --- EXPORTAR INDIVIDUAL ---
     export_range_ind = {"start": "", "end": ""}
 
     def download_individual(e):
@@ -876,12 +910,12 @@ def view_student_detail(page: ft.Page):
         hist_col
     ]))
 
-    content = ft.Column([card_info, card_stats, card_docs, card_hist], scroll="auto", expand=True)
+    content = ft.Column([card_info, card_stats, card_docs, card_hist])
 
     return ft.View("/student_detail", [
         UIHelper.create_header("Legajo del Alumno", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso"))),
-        ft.Container(content=content, padding=20, bgcolor=THEME["bg"], expand=True)
-    ])
+        ft.Container(content=content, padding=20, bgcolor=THEME["bg"])
+    ], scroll="auto") # FIX SCROLL
 
 def view_admin(page: ft.Page):
     return ft.View("/admin", [
@@ -889,8 +923,8 @@ def view_admin(page: ft.Page):
         ft.Container(content=ft.Column([
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("calendar_month", color=THEME["primary"]), title=ft.Text("Ciclos Lectivos"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/ciclos"))),
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("people", color=THEME["primary"]), title=ft.Text("Usuarios"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/users"))),
-        ]), padding=20, bgcolor=THEME["bg"], expand=True)
-    ])
+        ]), padding=20, bgcolor=THEME["bg"])
+    ], scroll="auto") # FIX SCROLL
 
 def view_ciclos(page: ft.Page):
     tf = ft.TextField(label="Año (Ej: 2026)", expand=True)
@@ -924,8 +958,8 @@ def view_ciclos(page: ft.Page):
         ft.Container(content=ft.Column([
             UIHelper.create_card(ft.Row([tf, ft.IconButton("add_circle", icon_color="green", icon_size=40, on_click=add)])),
             ft.Text("Historial", weight="bold"), col
-        ], expand=True), padding=20, bgcolor=THEME["bg"], expand=True)
-    ])
+        ], expand=True), padding=20, bgcolor=THEME["bg"])
+    ], scroll="auto") # FIX SCROLL
 
 def view_users(page: ft.Page):
     u = ft.TextField(label="Usuario"); p = ft.TextField(label="Clave", password=True); r = ft.Dropdown(value="preceptor", options=[ft.dropdown.Option("admin"), ft.dropdown.Option("preceptor")])
@@ -961,8 +995,8 @@ def view_users(page: ft.Page):
         ft.Container(content=ft.Column([
             UIHelper.create_card(ft.Column([ft.Row([u, p, r]), ft.ElevatedButton("Crear", on_click=add, bgcolor="green", color="white", width=float("inf"))])),
             ft.Text("Lista", weight="bold"), col
-        ], expand=True), padding=20, bgcolor=THEME["bg"], expand=True)
-    ])
+        ], expand=True), padding=20, bgcolor=THEME["bg"])
+    ], scroll="auto") # FIX SCROLL
 
 # ==============================================================================
 # MAIN ROUTER
@@ -1010,7 +1044,7 @@ if __name__ == "__main__":
     if port_env:
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
     else:
-        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)      
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)     
 # ==============================================================================
 # 🧨 ZONA DE LIMPIEZA V5 (REQUERIDO PARA ACTIVAR LOS NUEVOS CAMBIOS)
 # ==============================================================================
