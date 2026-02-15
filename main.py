@@ -694,3 +694,48 @@ if __name__ == "__main__":
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
     else:
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
+
+# --- AGREGAR ESTO AL FINAL DE main.py PARA DIAGNOSTICO ---
+def run_diagnostics():
+    print("\n--- 🕵️ DIAGNÓSTICO DE INICIO ---")
+    db_url = os.environ.get('DATABASE_URL')
+    
+    if not db_url:
+        print("❌ ERROR CRÍTICO: No se encontró la variable DATABASE_URL en el entorno.")
+        return
+
+    print(f"✅ DATABASE_URL detectada: {db_url[:15]}... (Oculta por seguridad)")
+    
+    try:
+        conn = psycopg2.connect(db_url, sslmode='require')
+        cur = conn.cursor()
+        
+        # 1. Ver si existe la tabla Ciclos
+        cur.execute("SELECT to_regclass('public.Ciclos');")
+        if cur.fetchone()[0] is None:
+            print("❌ La tabla 'Ciclos' NO EXISTE en esta base de datos.")
+        else:
+            print("✅ La tabla 'Ciclos' existe.")
+            
+            # 2. Ver qué hay dentro
+            cur.execute("SELECT * FROM Ciclos")
+            filas = cur.fetchall()
+            print(f"📊 Contenido de Ciclos: {filas}")
+            
+            if not filas:
+                print("⚠️ La tabla existe pero está VACÍA.")
+            else:
+                # 3. Buscar el activo
+                activos = [f for f in filas if f[2] == 1] # Asumiendo que 'activo' es la columna 3 (índice 2)
+                if activos:
+                    print(f"✅ Se encontró ciclo activo: {activos}")
+                else:
+                    print("⚠️ Hay ciclos, pero NINGUNO tiene activo=1.")
+
+        conn.close()
+    except Exception as e:
+        print(f"❌ ERROR DE CONEXIÓN O SQL: {e}")
+    print("--------------------------------\n")
+
+# Ejecutar diagnóstico antes de arrancar la app
+run_diagnostics()
