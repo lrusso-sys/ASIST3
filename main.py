@@ -6,6 +6,7 @@ from datetime import date, datetime
 import os
 import threading
 import io
+import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
 print("--- Oñepyrũ aplicación v7.1 (Fix Visual + Debug) ---", flush=True)
@@ -551,25 +552,38 @@ def view_curso(page: ft.Page):
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
     
-    # --- EXPORTADOR ---
-    file_picker = ft.FilePicker(on_result=lambda e: save_file_result(e))
-    page.overlay.append(file_picker)
-    
+    # --- EXPORTADOR DIRECTO (SIN FILE PICKER) ---
+    def download_excel(e):
+        # 1. Obtenemos fechas del diálogo
+        start = export_range["start"]
+        end = export_range["end"]
+        print(f"[DEBUG] Generando Excel para {cn} ({start} a {end})")
+        
+        try:
+            # 2. Generamos el archivo en memoria
+            excel_data = ReportService.generate_excel_curso(cid, start, end)
+            
+            if excel_data:
+                # 3. Truco Mágico: Convertir a Base64 para descarga directa
+                b64_data = base64.b64encode(excel_data.getvalue()).decode()
+                filename = f"Reporte_{cn}_{start}_{end}.xlsx".replace(" ", "_")
+                
+                # 4. Lanzamos la descarga en el navegador
+                page.launch_url(f"data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64_data}", 
+                              web_window_name="_blank") # _blank ayuda a que no cierre la app
+                
+                page.close(dlg)
+                UIHelper.show_snack(page, "📥 Descarga iniciada checkea tus descargas.")
+            else:
+                UIHelper.show_snack(page, "Error: El reporte vino vacío.", True)
+                
+        except Exception as ex:
+            print(f"❌ ERROR DESCARGA: {ex}")
+            UIHelper.show_snack(page, f"Error: {ex}", True)
+
+    # Variables para el diálogo
     export_range = {"start": "", "end": ""}
-
-    def save_file_result(e: ft.FilePickerResultEvent):
-        print(f"[DEBUG EXCEL] Dialog result: {e.path}")
-        if e.path:
-            try:
-                excel_data = ReportService.generate_excel_curso(cid, export_range["start"], export_range["end"])
-                if excel_data:
-                    with open(e.path, "wb") as f: f.write(excel_data.read())
-                    UIHelper.show_snack(page, "Archivo guardado exitosamente.")
-                else: UIHelper.show_snack(page, "Error al generar Excel", True)
-            except Exception as ex: 
-                print(f"[DEBUG EXCEL] Error escritura: {ex}")
-                UIHelper.show_snack(page, f"Error: {ex}", True)
-
+    
     def open_export_dlg(e):
         today = date.today()
         first_day = today.replace(day=1)
@@ -577,33 +591,29 @@ def view_curso(page: ft.Page):
         tf_start = ft.TextField(label="Inicio (YYYY-MM-DD)", value=first_day.isoformat())
         tf_end = ft.TextField(label="Fin (YYYY-MM-DD)", value=today.isoformat())
         
-        def confirm_export(e):
-            print(f"[DEBUG EXCEL] Exportando Curso ID {cid} de {tf_start.value} a {tf_end.value}")
+        def confirm_click(e):
             export_range["start"] = tf_start.value
             export_range["end"] = tf_end.value
-            fname = f"Reporte_{cn}_{tf_start.value}_al_{tf_end.value}.xlsx"
-            page.close(dlg)
-            file_picker.save_file(file_name=fname)
-            
-        # FIX VISUAL: Usamos Column en vez de Row para que entre bien
+            download_excel(e)
+
         dlg = ft.AlertDialog(
             title=ft.Text("Exportar Asistencia"),
             content=ft.Container(
                 content=ft.Column([
-                    ft.Text("Seleccione el período:", size=12),
-                    tf_start,
+                    ft.Text("Seleccione período:", size=12),
+                    tf_start, 
                     tf_end
-                ], tight=True), # 'tight' hace que ocupe lo mínimo necesario
+                ], tight=True),
                 width=300
             ),
             actions=[
                 ft.TextButton("Cancelar", on_click=lambda e: page.close(dlg)),
-                ft.ElevatedButton("Descargar Excel", on_click=confirm_export, bgcolor="green", color="white")
+                ft.ElevatedButton("Descargar Ahora", on_click=confirm_click, bgcolor="green", color="white")
             ]
         )
         page.open(dlg)
 
-    # --- REQUISITOS ---
+    # --- REQUISITOS (Igual que antes) ---
     def open_reqs_dlg(e):
         tf_req = ft.TextField(label="Nuevo Requisito", expand=True)
         list_col = ft.Column(scroll="auto")
@@ -631,7 +641,7 @@ def view_curso(page: ft.Page):
         tf_req.on_submit = add_req_local
         load_reqs_local()
         
-        dlg = ft.AlertDialog(
+        dlg_reqs = ft.AlertDialog(
             title=ft.Text("Documentación del Curso"),
             content=ft.Container(content=ft.Column([
                 ft.Text("Escribí y dale Enter:", size=12, color="grey"),
@@ -639,9 +649,9 @@ def view_curso(page: ft.Page):
                 ft.Divider(),
                 ft.Container(content=list_col, height=200, border=ft.border.all(1, "grey200"), border_radius=5, padding=5) 
             ], width=400), height=400),
-            actions=[ft.TextButton("Listo", on_click=lambda e: page.close(dlg))]
+            actions=[ft.TextButton("Listo", on_click=lambda e: page.close(dlg_reqs))]
         )
-        page.open(dlg)
+        page.open(dlg_reqs)
 
     # --- UI Principal ---
     lv = ft.Column(scroll="auto", expand=True)
