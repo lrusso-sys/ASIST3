@@ -1010,7 +1010,7 @@ if __name__ == "__main__":
     if port_env:
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
     else:
-        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)        
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)      
 # ==============================================================================
 # 🧨 ZONA DE LIMPIEZA V5 (REQUERIDO PARA ACTIVAR LOS NUEVOS CAMBIOS)
 # ==============================================================================
