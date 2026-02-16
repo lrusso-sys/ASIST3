@@ -363,7 +363,7 @@ class AttendanceService:
         for r in rows:
             if r['status'] in c: c[r['status']] += 1
         
-        faltas = c['A'] + c['S'] + (c['T'] * 0.5) 
+        faltas = c['A'] + c['S'] + (c['T'] * 0.25) 
         total = sum(c[k] for k in ['P','T','A','J','S'])
         pct = (1 - (faltas / total)) * 100 if total > 0 else 100
         
