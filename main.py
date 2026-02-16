@@ -9,7 +9,7 @@ import io
 import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v9.2 (Safety Fix TPP) ---", flush=True)
+print("--- Oñepyrũ aplicación v9.3 (Fix Chip TPP) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -661,7 +661,7 @@ def view_curso(page: ft.Page):
         )
         page.open(dlg_reqs)
 
-    # --- UI Principal (BLINDADA) ---
+    # --- UI Principal ---
     lv = ft.Column(scroll="auto", expand=True)
     def load_alumnos():
         try:
@@ -673,8 +673,6 @@ def view_curso(page: ft.Page):
                 sub = f"DNI: {a['dni'] or '-'}"
                 if a['tpp'] == 1: sub += " | ⚠️ TPP"
                 
-                # --- SAFETY FIX: Avatar ---
-                # Si el nombre es None o vacio, usá "?" para que no explote a['nombre'][0]
                 initial = a['nombre'][0] if (a['nombre'] and len(a['nombre']) > 0) else "?"
                 
                 lv.controls.append(UIHelper.create_card(ft.ListTile(
@@ -705,15 +703,13 @@ def view_curso(page: ft.Page):
             for a in SchoolService.get_alumnos(cid):
                 def_val = "P"
                 
-                # --- SAFETY FIX: TPP Logic ---
-                # Validamos que tpp_dias exista y no sea vacio antes de split
                 if a['tpp'] == 1 and a['tpp_dias'] and len(str(a['tpp_dias'])) > 0:
                     try:
                         dias_list = str(a['tpp_dias']).split(',')
                         if str(dia_sem) not in dias_list: 
                             def_val = "N"
                     except:
-                        pass # Si falla el parseo de dias, asume que tiene que venir (P)
+                        pass
                 
                 val = status_map.get(a['id'], def_val)
                 dd = ft.Dropdown(
@@ -742,7 +738,6 @@ def view_curso(page: ft.Page):
             for a in alumnos:
                 if a['id'] not in status_map:
                     def_val = "P" 
-                    # Safety TPP check repetido aqui
                     if a['tpp'] == 1 and a['tpp_dias'] and len(str(a['tpp_dias'])) > 0:
                         try:
                             if str(dia_sem) not in str(a['tpp_dias']).split(','): 
@@ -894,7 +889,8 @@ def view_student_detail(page: ft.Page):
             ft.Column([
                 ft.Text(alumno['nombre'] or "Sin Nombre", size=22, weight="bold"),
                 ft.Text(f"DNI: {alumno['dni'] or '-'}", size=16, color="grey"),
-                ft.Chip(label="TPP Activo", bgcolor="orange", label_style=ft.TextStyle(color="white")) if alumno['tpp']==1 else ft.Container()
+                # --- FIX CHIP ---
+                ft.Chip(label=ft.Text("TPP Activo", color="white"), bgcolor="orange") if alumno['tpp']==1 else ft.Container()
             ])
         ]),
         ft.Divider(),
@@ -1070,7 +1066,8 @@ if __name__ == "__main__":
     if port_env:
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
     else:
-        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)   
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
+        
 # ==============================================================================
 # 🧨 ZONA DE LIMPIEZA V5 (REQUERIDO PARA ACTIVAR LOS NUEVOS CAMBIOS)
 # ==============================================================================
