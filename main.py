@@ -9,7 +9,7 @@ import io
 import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v9.3 (Fix Chip TPP) ---", flush=True)
+print("--- Oñepyrũ aplicación v10.0 (Feriados + Excel Tardes) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -134,6 +134,9 @@ class DatabaseManager:
                 cur.execute("CREATE TABLE IF NOT EXISTS Asistencia (id SERIAL PRIMARY KEY, alumno_id INTEGER REFERENCES Alumnos(id) ON DELETE CASCADE, fecha TEXT, status TEXT, UNIQUE(alumno_id, fecha))")
                 cur.execute("CREATE TABLE IF NOT EXISTS Requisitos (id SERIAL PRIMARY KEY, curso_id INTEGER REFERENCES Cursos(id) ON DELETE CASCADE, descripcion TEXT)")
                 cur.execute("CREATE TABLE IF NOT EXISTS Documentacion_Alumno (requisito_id INTEGER REFERENCES Requisitos(id) ON DELETE CASCADE, alumno_id INTEGER REFERENCES Alumnos(id) ON DELETE CASCADE, entregado INTEGER DEFAULT 0, PRIMARY KEY (requisito_id, alumno_id))")
+                
+                # --- NUEVA TABLA FERIADOS ---
+                cur.execute("CREATE TABLE IF NOT EXISTS Feriados (id SERIAL PRIMARY KEY, fecha TEXT UNIQUE, descripcion TEXT)")
 
                 cur.execute("SELECT COUNT(*) FROM Usuarios")
                 if cur.fetchone()[0] == 0:
@@ -316,6 +319,23 @@ class DocService:
         q = "INSERT INTO Documentacion_Alumno (requisito_id, alumno_id, entregado) VALUES (%s, %s, %s) ON CONFLICT (requisito_id, alumno_id) DO UPDATE SET entregado=EXCLUDED.entregado"
         db.execute(q, (rid, aid, val))
 
+class HolidayService:
+    @staticmethod
+    def get_feriados():
+        return db.fetch_all("SELECT * FROM Feriados ORDER BY fecha DESC")
+    
+    @staticmethod
+    def add_feriado(fecha, descripcion):
+        return db.execute("INSERT INTO Feriados (fecha, descripcion) VALUES (%s, %s) ON CONFLICT DO NOTHING", (fecha, descripcion))
+    
+    @staticmethod
+    def delete_feriado(fid):
+        return db.execute("DELETE FROM Feriados WHERE id = %s", (fid,))
+    
+    @staticmethod
+    def check_feriado(fecha):
+        return db.fetch_one("SELECT * FROM Feriados WHERE fecha = %s", (fecha,))
+
 class AttendanceService:
     @staticmethod
     def get_day_status(curso_id, fecha):
@@ -421,14 +441,16 @@ class ReportService:
             ws.write(4, 0, "RESUMEN DEL PERIODO", bold)
             ws.write(5, 0, f"Presentes: {stats['p']}")
             ws.write(6, 0, f"Ausentes: {stats['a']}")
-            ws.write(7, 0, f"Faltas Totales: {stats['faltas']}")
-            ws.write(8, 0, f"Porcentaje: {stats['pct']}%")
+            # --- NUEVO: TARDES EN EXCEL ---
+            ws.write(7, 0, f"Llegadas Tarde: {stats['t']}") 
+            ws.write(8, 0, f"Faltas Totales: {stats['faltas']}")
+            ws.write(9, 0, f"Porcentaje: {stats['pct']}%")
             
-            ws.write(10, 0, "Fecha", header)
-            ws.write(10, 1, "Estado", header)
+            ws.write(11, 0, "Fecha", header)
+            ws.write(11, 1, "Estado", header)
             ws.set_column(0, 0, 15)
             
-            for i, h in enumerate(historial, start=11):
+            for i, h in enumerate(historial, start=12):
                 ws.write(i, 0, h['fecha'], cell)
                 mapa = {'P': 'Presente', 'A': 'Ausente', 'T': 'Tarde', 'S': 'Suspendido', 'J': 'Justificado', 'N': 'No Corresp.'}
                 ws.write(i, 1, mapa.get(h['status'], h['status']), cell)
@@ -696,7 +718,13 @@ def view_curso(page: ft.Page):
             try:
                 d_obj = date.fromisoformat(date_tf.value)
                 dia_sem = d_obj.weekday()
-                if dia_sem >= 5: UIHelper.show_snack(page, "Aviso: Fin de semana", False)
+                # --- NUEVO: CHECK FERIADOS ---
+                feriado = HolidayService.check_feriado(date_tf.value)
+                
+                if feriado:
+                    UIHelper.show_snack(page, f"📅 ES FERIADO: {feriado['descripcion']}", False)
+                elif dia_sem >= 5: 
+                    UIHelper.show_snack(page, "Aviso: Fin de semana", False)
             except: dia_sem = -1
 
             status_map = AttendanceService.get_day_status(cid, date_tf.value)
@@ -751,6 +779,9 @@ def view_curso(page: ft.Page):
             page.go("/dashboard")
         except Exception as ex:
             UIHelper.show_snack(page, f"Error al guardar: {ex}", True)
+
+    # Cuando cambia la fecha en el input, recargamos la lista para chequear feriados
+    date_tf.on_change = load_asist
 
     tabs = ft.Tabs(selected_index=0, tabs=[
         ft.Tab(text="Alumnos", icon="people", content=ft.Container(content=lv, padding=10)),
@@ -945,7 +976,47 @@ def view_admin(page: ft.Page):
         ft.Container(content=ft.Column([
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("calendar_month", color=THEME["primary"]), title=ft.Text("Ciclos Lectivos"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/ciclos"))),
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("people", color=THEME["primary"]), title=ft.Text("Usuarios"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/users"))),
+            # --- NUEVO: LINK A FERIADOS ---
+            UIHelper.create_card(ft.ListTile(leading=ft.Icon("event_busy", color=THEME["primary"]), title=ft.Text("Feriados"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/feriados"))),
         ]), padding=20, bgcolor=THEME["bg"])
+    ], scroll="auto")
+
+# --- NUEVA VISTA FERIADOS ---
+def view_feriados(page: ft.Page):
+    tf_fecha = ft.TextField(label="Fecha (YYYY-MM-DD)", width=180)
+    tf_desc = ft.TextField(label="Descripción (Ej: Dia del Maestro)", expand=True)
+    col = ft.Column(scroll="auto")
+    
+    def load():
+        col.controls.clear()
+        for f in HolidayService.get_feriados():
+            col.controls.append(UIHelper.create_card(ft.ListTile(
+                leading=ft.Icon("calendar_today", color="red"),
+                title=ft.Text(f['fecha']),
+                subtitle=ft.Text(f['descripcion']),
+                trailing=ft.IconButton("delete", icon_color="red", on_click=lambda e, fid=f['id']: (HolidayService.delete_feriado(fid), load(), page.update()))
+            ), padding=5))
+        page.update()
+    
+    def add(e):
+        if tf_fecha.value and tf_desc.value:
+            HolidayService.add_feriado(tf_fecha.value, tf_desc.value)
+            tf_fecha.value = ""; tf_desc.value = ""
+            load()
+        else:
+            UIHelper.show_snack(page, "Completar ambos campos", True)
+            
+    load()
+    return ft.View("/feriados", [
+        UIHelper.create_header("Feriados", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/admin"))),
+        ft.Container(content=ft.Column([
+            UIHelper.create_card(ft.Column([
+                ft.Row([tf_fecha, tf_desc]),
+                ft.ElevatedButton("Agregar Feriado", on_click=add, bgcolor="green", color="white", width=float("inf"))
+            ])),
+            ft.Text("Lista de Feriados", weight="bold"),
+            col
+        ], expand=True), padding=20, bgcolor=THEME["bg"])
     ], scroll="auto")
 
 def view_ciclos(page: ft.Page):
@@ -1037,7 +1108,8 @@ def main(page: ft.Page):
         "/form_student": view_form_student,
         "/admin": view_admin,
         "/ciclos": view_ciclos,
-        "/users": view_users
+        "/users": view_users,
+        "/feriados": view_feriados # NUEVA RUTA
     }
 
     def route_change(route):
@@ -1067,7 +1139,6 @@ if __name__ == "__main__":
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
     else:
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
-        
 # ==============================================================================
 # 🧨 ZONA DE LIMPIEZA V5 (REQUERIDO PARA ACTIVAR LOS NUEVOS CAMBIOS)
 # ==============================================================================
