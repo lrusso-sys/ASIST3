@@ -9,7 +9,7 @@ import io
 import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v9.1 (Mobile Fix) ---", flush=True)
+print("--- Oñepyrũ aplicación v9.2 (Safety Fix TPP) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -467,14 +467,13 @@ def view_login(page: ft.Page):
             ], horizontal_alignment="center"),
             alignment=ft.alignment.center, expand=True, bgcolor=THEME["bg"]
         )
-    ], scroll="auto") # FIX SCROLL
+    ], scroll="auto")
 
 def view_dashboard(page: ft.Page):
     user = page.session.get("user")
     if not user: return view_login(page)
     
     txt_ciclo = ft.Text("Cargando...", weight="bold", color="white")
-    # FIX MOBILE: ResponsiveRow en lugar de GridView
     courses_container = ft.ResponsiveRow(spacing=15, run_spacing=15)
     
     def load():
@@ -507,12 +506,10 @@ def view_dashboard(page: ft.Page):
                         ft.IconButton("arrow_forward_ios", icon_color=THEME["primary"], on_click=go)
                     ], alignment="spaceBetween"), padding=15, on_click=go
                 )
-                # RESPONSIVE: En movil (xs) 12 columnas (ancho total), en pc (md) 6 columnas (mitad)
                 courses_container.controls.append(ft.Container(content=card, col={"xs": 12, "md": 6}))
 
     load()
 
-    # --- CAMBIO DE CONTRASEÑA ---
     def open_pass_dlg(e):
         p1 = ft.TextField(label="Nueva Contraseña", password=True, can_reveal_password=True)
         p2 = ft.TextField(label="Repetir Contraseña", password=True)
@@ -570,14 +567,14 @@ def view_dashboard(page: ft.Page):
             ft.Divider(height=10, color="transparent"),
             courses_container
         ]), padding=20) 
-    ], floating_action_button=fab, scroll="auto") # FIX SCROLL
+    ], floating_action_button=fab, scroll="auto")
 
 def view_curso(page: ft.Page):
     cid = page.session.get("curso_id")
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
     
-    # --- EXPORTADOR DIRECTO ---
+    # --- EXPORTADOR ---
     def download_excel(e):
         start = export_range["start"]
         end = export_range["end"]
@@ -624,7 +621,7 @@ def view_curso(page: ft.Page):
         )
         page.open(dlg)
 
-    # --- REQUISITOS (Docs) ---
+    # --- REQUISITOS ---
     def open_reqs_dlg(e):
         tf_req = ft.TextField(label="Nuevo Requisito", expand=True)
         list_col = ft.Column(scroll="auto")
@@ -664,74 +661,101 @@ def view_curso(page: ft.Page):
         )
         page.open(dlg_reqs)
 
-    # --- UI Principal ---
-    lv = ft.Column(scroll="auto", expand=True) # Scroll interno por las dudas
+    # --- UI Principal (BLINDADA) ---
+    lv = ft.Column(scroll="auto", expand=True)
     def load_alumnos():
-        lv.controls.clear()
-        for a in SchoolService.get_alumnos(cid):
-            def det(e, aid=a['id']): page.session.set("alumno_id", aid); page.go("/student_detail")
-            def edt(e, aid=a['id']): page.session.set("alumno_id_edit", aid); page.go("/form_student")
-            sub = f"DNI: {a['dni'] or '-'}"
-            if a['tpp'] == 1: sub += " | ⚠️ TPP"
-            lv.controls.append(UIHelper.create_card(ft.ListTile(
-                leading=ft.CircleAvatar(content=ft.Text(a['nombre'][0]), bgcolor=THEME["secondary"], color="white"),
-                title=ft.Text(a['nombre'], weight="bold"),
-                subtitle=ft.Text(sub),
-                on_click=det,
-                trailing=ft.IconButton("edit", on_click=edt)
-            ), padding=0))
-        page.update()
+        try:
+            lv.controls.clear()
+            for a in SchoolService.get_alumnos(cid):
+                def det(e, aid=a['id']): page.session.set("alumno_id", aid); page.go("/student_detail")
+                def edt(e, aid=a['id']): page.session.set("alumno_id_edit", aid); page.go("/form_student")
+                
+                sub = f"DNI: {a['dni'] or '-'}"
+                if a['tpp'] == 1: sub += " | ⚠️ TPP"
+                
+                # --- SAFETY FIX: Avatar ---
+                # Si el nombre es None o vacio, usá "?" para que no explote a['nombre'][0]
+                initial = a['nombre'][0] if (a['nombre'] and len(a['nombre']) > 0) else "?"
+                
+                lv.controls.append(UIHelper.create_card(ft.ListTile(
+                    leading=ft.CircleAvatar(content=ft.Text(initial), bgcolor=THEME["secondary"], color="white"),
+                    title=ft.Text(a['nombre'] or "Sin Nombre", weight="bold"),
+                    subtitle=ft.Text(sub),
+                    on_click=det,
+                    trailing=ft.IconButton("edit", on_click=edt)
+                ), padding=0))
+            page.update()
+        except Exception as e:
+            lv.controls.append(ft.Text(f"Error cargando lista: {e}", color="red"))
+            page.update()
 
     date_tf = ft.TextField(label="Fecha", value=date.today().isoformat(), width=150, height=40, text_size=14)
     asist_col = ft.Column(scroll="auto", expand=True)
     
     def load_asist(e=None):
-        asist_col.controls.clear()
         try:
-            d_obj = date.fromisoformat(date_tf.value)
-            dia_sem = d_obj.weekday()
-            if dia_sem >= 5: UIHelper.show_snack(page, "Aviso: Fin de semana", False)
-        except: dia_sem = -1
+            asist_col.controls.clear()
+            try:
+                d_obj = date.fromisoformat(date_tf.value)
+                dia_sem = d_obj.weekday()
+                if dia_sem >= 5: UIHelper.show_snack(page, "Aviso: Fin de semana", False)
+            except: dia_sem = -1
 
-        status_map = AttendanceService.get_day_status(cid, date_tf.value)
-        for a in SchoolService.get_alumnos(cid):
-            def_val = "P"
-            if a['tpp'] == 1 and a['tpp_dias']:
-                if str(dia_sem) not in a['tpp_dias'].split(','): def_val = "N"
-            
-            val = status_map.get(a['id'], def_val)
-            dd = ft.Dropdown(
-                width=100, height=40, text_size=14, value=val,
-                options=[ft.dropdown.Option(x) for x in ["P","T","A","J","S","N"]], 
-                on_change=lambda e, aid=a['id']: AttendanceService.mark(aid, date_tf.value, e.control.value)
-            )
-            asist_col.controls.append(ft.Container(content=ft.Row([ft.Text(a['nombre'], expand=True, weight="w500"), dd]), padding=5, border=ft.border.only(bottom=ft.border.BorderSide(1, "grey200"))))
-        page.update()
-    
-    # GUARDADO INTELIGENTE
-    def guardar_asistencia_manual(e):
-        fecha = date_tf.value
-        alumnos = SchoolService.get_alumnos(cid)
-        status_map = AttendanceService.get_day_status(cid, fecha)
-        
-        try:
-            d_obj = date.fromisoformat(fecha)
-            dia_sem = d_obj.weekday()
-        except: dia_sem = -1
-
-        count_fixed = 0
-        for a in alumnos:
-            if a['id'] not in status_map:
-                def_val = "P" 
-                if a['tpp'] == 1 and a['tpp_dias']:
-                    if str(dia_sem) not in a['tpp_dias'].split(','): 
-                        def_val = "N" 
+            status_map = AttendanceService.get_day_status(cid, date_tf.value)
+            for a in SchoolService.get_alumnos(cid):
+                def_val = "P"
                 
-                AttendanceService.mark(a['id'], fecha, def_val)
-                count_fixed += 1
-        
-        UIHelper.show_snack(page, f"✅ Asistencia completada ({count_fixed} automáticos).")
-        page.go("/dashboard")
+                # --- SAFETY FIX: TPP Logic ---
+                # Validamos que tpp_dias exista y no sea vacio antes de split
+                if a['tpp'] == 1 and a['tpp_dias'] and len(str(a['tpp_dias'])) > 0:
+                    try:
+                        dias_list = str(a['tpp_dias']).split(',')
+                        if str(dia_sem) not in dias_list: 
+                            def_val = "N"
+                    except:
+                        pass # Si falla el parseo de dias, asume que tiene que venir (P)
+                
+                val = status_map.get(a['id'], def_val)
+                dd = ft.Dropdown(
+                    width=100, height=40, text_size=14, value=val,
+                    options=[ft.dropdown.Option(x) for x in ["P","T","A","J","S","N"]], 
+                    on_change=lambda e, aid=a['id']: AttendanceService.mark(aid, date_tf.value, e.control.value)
+                )
+                asist_col.controls.append(ft.Container(content=ft.Row([ft.Text(a['nombre'] or "?", expand=True, weight="w500"), dd]), padding=5, border=ft.border.only(bottom=ft.border.BorderSide(1, "grey200"))))
+            page.update()
+        except Exception as e:
+            asist_col.controls.append(ft.Text(f"Error carga asistencia: {e}", color="red"))
+            page.update()
+    
+    def guardar_asistencia_manual(e):
+        try:
+            fecha = date_tf.value
+            alumnos = SchoolService.get_alumnos(cid)
+            status_map = AttendanceService.get_day_status(cid, fecha)
+            
+            try:
+                d_obj = date.fromisoformat(fecha)
+                dia_sem = d_obj.weekday()
+            except: dia_sem = -1
+
+            count_fixed = 0
+            for a in alumnos:
+                if a['id'] not in status_map:
+                    def_val = "P" 
+                    # Safety TPP check repetido aqui
+                    if a['tpp'] == 1 and a['tpp_dias'] and len(str(a['tpp_dias'])) > 0:
+                        try:
+                            if str(dia_sem) not in str(a['tpp_dias']).split(','): 
+                                def_val = "N" 
+                        except: pass
+                    
+                    AttendanceService.mark(a['id'], fecha, def_val)
+                    count_fixed += 1
+            
+            UIHelper.show_snack(page, f"✅ Asistencia completada ({count_fixed} automáticos).")
+            page.go("/dashboard")
+        except Exception as ex:
+            UIHelper.show_snack(page, f"Error al guardar: {ex}", True)
 
     tabs = ft.Tabs(selected_index=0, tabs=[
         ft.Tab(text="Alumnos", icon="people", content=ft.Container(content=lv, padding=10)),
@@ -775,7 +799,7 @@ def view_curso(page: ft.Page):
     return ft.View("/curso", [
         UIHelper.create_header(cn, "Gestión", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard")), actions=actions_header),
         ft.Container(content=tabs, expand=True, bgcolor=THEME["bg"])
-    ], floating_action_button=fab_save, scroll="auto") # FIX SCROLL
+    ], floating_action_button=fab_save, scroll="auto")
 
 def view_form_student(page: ft.Page):
     cid = page.session.get("curso_id"); aid = page.session.get("alumno_id_edit"); is_edit = aid is not None
@@ -810,8 +834,8 @@ def view_form_student(page: ft.Page):
             ft.Container(content=ft.Column([sw_tpp, cont_days]), bgcolor="blue50", padding=10, border_radius=10),
             ft.Container(height=10),
             ft.ElevatedButton("Guardar", on_click=save, width=float("inf"), bgcolor=THEME["primary"], color="white")
-        ])), padding=20, bgcolor=THEME["bg"], expand=True) # expand ayuda al scroll interno
-    ], scroll="auto") # FIX SCROLL
+        ])), padding=20, bgcolor=THEME["bg"], expand=True)
+    ], scroll="auto")
 
 def view_student_detail(page: ft.Page):
     aid = page.session.get("alumno_id")
@@ -861,12 +885,14 @@ def view_student_detail(page: ft.Page):
         )
         page.open(dlg)
 
-    # --- BLOQUE 1: CABECERA Y DATOS ---
+    # --- SAFETY FIX: Avatar Check ---
+    initial = alumno['nombre'][0] if (alumno['nombre'] and len(alumno['nombre']) > 0) else "?"
+
     card_info = UIHelper.create_card(ft.Column([
         ft.Row([
-            ft.CircleAvatar(content=ft.Text(alumno['nombre'][0], size=30), radius=40, bgcolor=THEME["primary"], color="white"),
+            ft.CircleAvatar(content=ft.Text(initial), radius=40, bgcolor=THEME["primary"], color="white"),
             ft.Column([
-                ft.Text(alumno['nombre'], size=22, weight="bold"),
+                ft.Text(alumno['nombre'] or "Sin Nombre", size=22, weight="bold"),
                 ft.Text(f"DNI: {alumno['dni'] or '-'}", size=16, color="grey"),
                 ft.Chip(label="TPP Activo", bgcolor="orange", label_style=ft.TextStyle(color="white")) if alumno['tpp']==1 else ft.Container()
             ])
@@ -915,7 +941,7 @@ def view_student_detail(page: ft.Page):
     return ft.View("/student_detail", [
         UIHelper.create_header("Legajo del Alumno", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso"))),
         ft.Container(content=content, padding=20, bgcolor=THEME["bg"])
-    ], scroll="auto") # FIX SCROLL
+    ], scroll="auto")
 
 def view_admin(page: ft.Page):
     return ft.View("/admin", [
@@ -924,7 +950,7 @@ def view_admin(page: ft.Page):
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("calendar_month", color=THEME["primary"]), title=ft.Text("Ciclos Lectivos"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/ciclos"))),
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("people", color=THEME["primary"]), title=ft.Text("Usuarios"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/users"))),
         ]), padding=20, bgcolor=THEME["bg"])
-    ], scroll="auto") # FIX SCROLL
+    ], scroll="auto")
 
 def view_ciclos(page: ft.Page):
     tf = ft.TextField(label="Año (Ej: 2026)", expand=True)
@@ -959,7 +985,7 @@ def view_ciclos(page: ft.Page):
             UIHelper.create_card(ft.Row([tf, ft.IconButton("add_circle", icon_color="green", icon_size=40, on_click=add)])),
             ft.Text("Historial", weight="bold"), col
         ], expand=True), padding=20, bgcolor=THEME["bg"])
-    ], scroll="auto") # FIX SCROLL
+    ], scroll="auto")
 
 def view_users(page: ft.Page):
     u = ft.TextField(label="Usuario"); p = ft.TextField(label="Clave", password=True); r = ft.Dropdown(value="preceptor", options=[ft.dropdown.Option("admin"), ft.dropdown.Option("preceptor")])
@@ -996,7 +1022,7 @@ def view_users(page: ft.Page):
             UIHelper.create_card(ft.Column([ft.Row([u, p, r]), ft.ElevatedButton("Crear", on_click=add, bgcolor="green", color="white", width=float("inf"))])),
             ft.Text("Lista", weight="bold"), col
         ], expand=True), padding=20, bgcolor=THEME["bg"])
-    ], scroll="auto") # FIX SCROLL
+    ], scroll="auto")
 
 # ==============================================================================
 # MAIN ROUTER
@@ -1044,7 +1070,7 @@ if __name__ == "__main__":
     if port_env:
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
     else:
-        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)     
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)   
 # ==============================================================================
 # 🧨 ZONA DE LIMPIEZA V5 (REQUERIDO PARA ACTIVAR LOS NUEVOS CAMBIOS)
 # ==============================================================================
