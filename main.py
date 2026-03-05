@@ -9,7 +9,7 @@ import io
 import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v11.2 (Fix Mobile UI) ---", flush=True)
+print("--- Oñepyrũ aplicación v11.3 (Observaciones en Legajo) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -621,7 +621,6 @@ def view_curso(page: ft.Page):
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
     
-    # --- EXPORTADOR ---
     def download_excel(e):
         start = export_range["start"]
         end = export_range["end"]
@@ -668,7 +667,6 @@ def view_curso(page: ft.Page):
         )
         page.open(dlg)
 
-    # --- REQUISITOS ---
     def open_reqs_dlg(e):
         tf_req = ft.TextField(label="Nuevo Requisito", expand=True)
         list_col = ft.Column(scroll="auto")
@@ -708,8 +706,7 @@ def view_curso(page: ft.Page):
         )
         page.open(dlg_reqs)
 
-    # --- UI Principal ---
-    lv = ft.Column(scroll="auto", expand=True)
+    lv = ft.Column(scroll="auto", expand=True) 
     def load_alumnos():
         try:
             lv.controls.clear()
@@ -730,7 +727,6 @@ def view_curso(page: ft.Page):
                     trailing=ft.IconButton("edit", on_click=edt)
                 ), padding=0))
             
-            # FIX ESPACIADOR ALUMNOS (para que el boton no los tape)
             lv.controls.append(ft.Container(height=80))
             page.update()
         except Exception as e:
@@ -738,7 +734,7 @@ def view_curso(page: ft.Page):
             page.update()
 
     date_tf = ft.TextField(label="Fecha", value=date.today().isoformat(), width=150, height=40, text_size=14)
-    asist_col = ft.Column(scroll="auto", expand=True)
+    asist_col = ft.Column(scroll="auto", expand=True) 
     
     def load_asist(e=None):
         try:
@@ -772,7 +768,6 @@ def view_curso(page: ft.Page):
                 val = status_map.get(a['id'], def_val)
                 if val == "T": val = "TM" 
                 
-                # FIX TEXTO CORTADO EN CELULARES (le sacamos el height=40 y metimos content_padding)
                 dd = ft.Dropdown(
                     width=95, 
                     text_size=13, 
@@ -783,7 +778,6 @@ def view_curso(page: ft.Page):
                 )
                 asist_col.controls.append(ft.Container(content=ft.Row([ft.Text(a['nombre'] or "?", expand=True, weight="w500"), dd]), padding=5, border=ft.border.only(bottom=ft.border.BorderSide(1, "grey200"))))
             
-            # FIX ESPACIADOR ASISTENCIA (para que el boton no los tape)
             asist_col.controls.append(ft.Container(height=100))
             page.update()
         except Exception as e:
@@ -972,6 +966,7 @@ def view_student_detail(page: ft.Page):
 
     initial = alumno['nombre'][0] if (alumno['nombre'] and len(alumno['nombre']) > 0) else "?"
 
+    # --- FIX 11.3: AGREGADO DE OBSERVACIONES AL LEGAJO ---
     card_info = UIHelper.create_card(ft.Column([
         ft.Row([
             ft.CircleAvatar(content=ft.Text(initial), radius=40, bgcolor=THEME["primary"], color="white"),
@@ -982,7 +977,12 @@ def view_student_detail(page: ft.Page):
             ])
         ]),
         ft.Divider(),
-        ft.Row([ft.Icon("phone", size=16), ft.Text(f"Tutor: {alumno['tutor_nombre'] or '-'} ({alumno['tutor_telefono'] or '-'})")])
+        ft.Row([ft.Icon("phone", size=16, color=THEME["primary"]), ft.Text(f"Tutor: {alumno['tutor_nombre'] or '-'} ({alumno['tutor_telefono'] or '-'})")]),
+        ft.Divider(),
+        ft.Row([
+            ft.Icon("notes", size=16, color="grey"), 
+            ft.Text(alumno['observaciones'] if alumno.get('observaciones') else "Sin observaciones", italic=True, color="grey", expand=True)
+        ], vertical_alignment="start")
     ]))
 
     def stat_box(label, value, color):
