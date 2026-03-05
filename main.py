@@ -9,7 +9,7 @@ import io
 import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v11.3 (Observaciones en Legajo) ---", flush=True)
+print("--- Oñepyrũ aplicación v12.0 (Importar Excel Estabilizado) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -17,6 +17,17 @@ try:
 except ImportError:
     xlsxwriter = None
     print("⚠️ URGENTE: XlsxWriter NO está instalado.")
+
+# NUEVA DEPENDENCIA: openpyxl para leer excels
+try:
+    import openpyxl
+    print("✅ Librería OpenPyXL detectada.")
+except ImportError:
+    openpyxl = None
+    print("⚠️ URGENTE: OpenPyXL NO está instalado. Agregalo a requirements.txt")
+
+# Directorio temporal para las subidas de archivos (obligatorio para FilePicker en web)
+os.makedirs("uploads", exist_ok=True)
 
 # --- CONFIGURACIÓN UI ---
 THEME = {
@@ -297,6 +308,34 @@ class SchoolService:
     @staticmethod
     def delete_alumno(aid):
         return db.execute("DELETE FROM Alumnos WHERE id = %s", (aid,))
+
+    # --- FUNCIÓN PARA LEER EXCEL ---
+    @staticmethod
+    def import_alumnos_excel(curso_id, filepath):
+        if not openpyxl: 
+            raise Exception("La librería openpyxl no está instalada.")
+        
+        wb = openpyxl.load_workbook(filepath)
+        ws = wb.active
+        count = 0
+        
+        # Leemos desde la fila 2 (saltando títulos)
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0]: # Solo si hay un nombre en la columna A
+                data = {
+                    'curso_id': curso_id,
+                    'nombre': str(row[0]).strip(),
+                    'dni': str(row[1]).strip() if len(row)>1 and row[1] is not None else "",
+                    'tn': str(row[2]).strip() if len(row)>2 and row[2] is not None else "",
+                    'tt': str(row[3]).strip() if len(row)>3 and row[3] is not None else "",
+                    'obs': str(row[4]).strip() if len(row)>4 and row[4] is not None else "Importado desde Excel",
+                    'tpp': 0,
+                    'tpp_dias': ""
+                }
+                if SchoolService.add_alumno(data):
+                    count += 1
+                    
+        return count
 
 class DocService:
     @staticmethod
@@ -620,7 +659,33 @@ def view_curso(page: ft.Page):
     cid = page.session.get("curso_id")
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
-    
+
+    # --- LÓGICA FILEPICKER SEGURA (Evita trabar la vista) ---
+    def on_excel_picked(e: ft.FilePickerResultEvent):
+        if e.files and len(e.files) > 0:
+            upload_url = page.get_upload_url(e.files[0].name, 60)
+            file_picker.upload([ft.FilePickerUploadFile(e.files[0].name, upload_url=upload_url)])
+            UIHelper.show_snack(page, "🔄 Subiendo y procesando Excel...")
+
+    def on_excel_uploaded(e: ft.FilePickerUploadEvent):
+        if not e.error:
+            filepath = os.path.join("uploads", e.file_name)
+            try:
+                count = SchoolService.import_alumnos_excel(cid, filepath)
+                UIHelper.show_snack(page, f"✅ Se importaron {count} alumnos nuevos.")
+                load_alumnos()
+            except Exception as ex:
+                UIHelper.show_snack(page, f"❌ Error leyendo Excel: {ex}", True)
+            finally:
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+        else:
+            UIHelper.show_snack(page, f"❌ Error de subida: {e.error}", True)
+
+    # Se inicializa el FilePicker y se mete DENTRO de la vista (no en el overlay central)
+    file_picker = ft.FilePicker(on_result=on_excel_picked, on_upload=on_excel_uploaded)
+
+    # --- EXPORTADOR ---
     def download_excel(e):
         start = export_range["start"]
         end = export_range["end"]
@@ -667,6 +732,7 @@ def view_curso(page: ft.Page):
         )
         page.open(dlg)
 
+    # --- REQUISITOS ---
     def open_reqs_dlg(e):
         tf_req = ft.TextField(label="Nuevo Requisito", expand=True)
         list_col = ft.Column(scroll="auto")
@@ -706,10 +772,14 @@ def view_curso(page: ft.Page):
         )
         page.open(dlg_reqs)
 
+    # --- UI Principal ---
     lv = ft.Column(scroll="auto", expand=True) 
     def load_alumnos():
         try:
             lv.controls.clear()
+            # El file_picker es invisible, pero tiene que estar en la columna para existir
+            lv.controls.append(file_picker) 
+
             for a in SchoolService.get_alumnos(cid):
                 def det(e, aid=a['id']): page.session.set("alumno_id", aid); page.go("/student_detail")
                 def edt(e, aid=a['id']): page.session.set("alumno_id_edit", aid); page.go("/form_student")
@@ -816,7 +886,16 @@ def view_curso(page: ft.Page):
     date_tf.on_change = load_asist
 
     tabs = ft.Tabs(selected_index=0, tabs=[
-        ft.Tab(text="Alumnos", icon="people", content=ft.Container(content=lv, padding=10)),
+        ft.Tab(text="Alumnos", icon="people", content=ft.Container(
+            content=ft.Column([
+                # BOTÓN NUEVO: IMPORTAR EXCEL
+                ft.Row([
+                    ft.Text("Lista del Curso", weight="bold", size=16, expand=True), 
+                    ft.ElevatedButton("Importar Excel", icon="upload_file", bgcolor="blue", color="white", on_click=lambda _: file_picker.pick_files(allowed_extensions=["xlsx"]))
+                ]),
+                ft.Divider(),
+                lv
+            ], expand=True), padding=10)),
         ft.Tab(text="Asistencia", icon="check_circle", content=ft.Container(
             content=ft.Column([
                 ft.Row([date_tf, ft.IconButton("refresh", on_click=load_asist)]), 
@@ -966,7 +1045,6 @@ def view_student_detail(page: ft.Page):
 
     initial = alumno['nombre'][0] if (alumno['nombre'] and len(alumno['nombre']) > 0) else "?"
 
-    # --- FIX 11.3: AGREGADO DE OBSERVACIONES AL LEGAJO ---
     card_info = UIHelper.create_card(ft.Column([
         ft.Row([
             ft.CircleAvatar(content=ft.Text(initial), radius=40, bgcolor=THEME["primary"], color="white"),
@@ -1192,6 +1270,6 @@ def main(page: ft.Page):
 if __name__ == "__main__":
     port_env = os.environ.get("PORT")
     if port_env:
-        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0", upload_dir="uploads")
     else:
-        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550, upload_dir="uploads")
