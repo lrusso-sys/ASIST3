@@ -9,7 +9,7 @@ import io
 import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v11.0 (Doble Escolaridad + Eliminar) ---", flush=True)
+print("--- Oñepyrũ aplicación v11.1 (Mobile Visibility Fix) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -294,7 +294,6 @@ class SchoolService:
         return db.execute("UPDATE Alumnos SET nombre=%s, dni=%s, observaciones=%s, tutor_nombre=%s, tutor_telefono=%s, tpp=%s, tpp_dias=%s WHERE id=%s", 
                           (data['nombre'], data['dni'], data['obs'], data['tn'], data['tt'], data['tpp'], data['tpp_dias'], aid))
 
-    # --- NUEVO: ELIMINAR ALUMNO ---
     @staticmethod
     def delete_alumno(aid):
         return db.execute("DELETE FROM Alumnos WHERE id = %s", (aid,))
@@ -363,29 +362,21 @@ class AttendanceService:
     
     @staticmethod
     def _calc_stats(rows):
-        # --- FIX: NUEVOS ESTADOS DE DOBLE ESCOLARIDAD ---
-        # Dejamos la 'T' vieja por las dudas haya registros viejos y no explote
         c = {k: 0 for k in ['P','T','TM','TT','MFM','MFT','A','J','S','N']}
-        
         for r in rows:
             if r['status'] in c: 
                 c[r['status']] += 1
             else:
-                c[r['status']] = 1 # Fallback por si hay basura vieja
-        
-        # Matemática UNSAM Técnica:
-        # T, TM, TT = 0.25 (Llegadas Tarde)
-        # MFM, MFT = 0.5 (Medias Faltas)
+                c[r['status']] = 1
+                
         faltas = c['A'] + c['S'] + (c['T'] * 0.25) + (c['TM'] * 0.25) + (c['TT'] * 0.25) + (c['MFM'] * 0.5) + (c['MFT'] * 0.5)
-        
-        # Total de días que debió venir (ignoramos la N)
         total = sum(c[k] for k in ['P','T','TM','TT','MFM','MFT','A','J','S'])
         pct = (1 - (faltas / total)) * 100 if total > 0 else 100
         
         return {
             'p': c['P'], 
             'a': c['A'], 
-            't_old': c['T'], # por las dudas
+            't_old': c['T'], 
             'tm': c['TM'],
             'tt': c['TT'],
             'mfm': c['MFM'],
@@ -467,7 +458,6 @@ class ReportService:
             ws.write(5, 0, f"Presentes: {stats['p']}")
             ws.write(6, 0, f"Ausentes: {stats['a']}")
             
-            # --- NUEVOS CAMPOS EN EXCEL ---
             tardes_totales = stats['tm'] + stats['tt'] + stats['t_old']
             medias_faltas = stats['mfm'] + stats['mft']
             
@@ -483,16 +473,10 @@ class ReportService:
             for i, h in enumerate(historial, start=13):
                 ws.write(i, 0, h['fecha'], cell)
                 mapa = {
-                    'P': 'Presente', 
-                    'A': 'Ausente', 
-                    'T': 'Tarde (Legado)', 
-                    'TM': 'Tarde Mañana', 
-                    'TT': 'Tarde Tarde', 
-                    'MFM': 'Media Falta Mañana', 
-                    'MFT': 'Media Falta Tarde', 
-                    'S': 'Suspendido', 
-                    'J': 'Justificado', 
-                    'N': 'No Corresp.'
+                    'P': 'Presente', 'A': 'Ausente', 'T': 'Tarde (Legado)', 
+                    'TM': 'Tarde Mañana', 'TT': 'Tarde Tarde', 
+                    'MFM': 'Media Falta Mañana', 'MFT': 'Media Falta Tarde', 
+                    'S': 'Suspendido', 'J': 'Justificado', 'N': 'No Corresp.'
                 }
                 ws.write(i, 1, mapa.get(h['status'], h['status']), cell)
                 
@@ -725,7 +709,7 @@ def view_curso(page: ft.Page):
         page.open(dlg_reqs)
 
     # --- UI Principal ---
-    lv = ft.Column(scroll="auto", expand=True)
+    lv = ft.Column(scroll="auto", expand=True) # Este es el que maneja el scroll de alumnos
     def load_alumnos():
         try:
             lv.controls.clear()
@@ -751,7 +735,7 @@ def view_curso(page: ft.Page):
             page.update()
 
     date_tf = ft.TextField(label="Fecha", value=date.today().isoformat(), width=150, height=40, text_size=14)
-    asist_col = ft.Column(scroll="auto", expand=True)
+    asist_col = ft.Column(scroll="auto", expand=True) # Este maneja el scroll de asistencia
     
     def load_asist(e=None):
         try:
@@ -769,7 +753,6 @@ def view_curso(page: ft.Page):
 
             status_map = AttendanceService.get_day_status(cid, date_tf.value)
             
-            # --- NUEVAS OPCIONES DE ASISTENCIA EN EL DESPLEGABLE ---
             opciones_asistencia = ["P", "TM", "TT", "MFM", "MFT", "A", "J", "S", "N"]
             
             for a in SchoolService.get_alumnos(cid):
@@ -784,7 +767,6 @@ def view_curso(page: ft.Page):
                         pass
                 
                 val = status_map.get(a['id'], def_val)
-                # Si por alguna razon quedó la T vieja en la DB, la mapeamos a TM para que no rompa el frontend
                 if val == "T": val = "TM" 
                 
                 dd = ft.Dropdown(
@@ -836,7 +818,7 @@ def view_curso(page: ft.Page):
                 ft.Row([date_tf, ft.IconButton("refresh", on_click=load_asist)]), 
                 ft.Divider(), 
                 asist_col
-            ]), padding=10))
+            ], expand=True), padding=10)) # FIX: expand=True en el Column interno
     ], expand=True, on_change=lambda e: (load_alumnos() if e.control.selected_index==0 else load_asist()))
 
     load_alumnos()
@@ -868,10 +850,11 @@ def view_curso(page: ft.Page):
 
     tabs.on_change = on_tab_change
 
+    # FIX VITAL: ft.View sin scroll="auto" para que el expand de las Tabs funcione
     return ft.View("/curso", [
         UIHelper.create_header(cn, "Gestión", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard")), actions=actions_header),
         ft.Container(content=tabs, expand=True, bgcolor=THEME["bg"])
-    ], floating_action_button=fab_save, scroll="auto")
+    ], floating_action_button=fab_save)
 
 def view_form_student(page: ft.Page):
     cid = page.session.get("curso_id"); aid = page.session.get("alumno_id_edit"); is_edit = aid is not None
@@ -899,7 +882,6 @@ def view_form_student(page: ft.Page):
         else: SchoolService.add_alumno(data)
         page.go("/curso")
 
-    # --- NUEVO: FUNCIONALIDAD ELIMINAR ---
     def delete_student(e):
         if is_edit:
             SchoolService.delete_alumno(aid)
@@ -928,7 +910,7 @@ def view_form_student(page: ft.Page):
             ft.Container(height=10),
             ft.ElevatedButton("Guardar", on_click=save, width=float("inf"), bgcolor=THEME["primary"], color="white"),
             ft.Container(height=10),
-            btn_eliminar # Botón de eliminar (solo si estamos editando)
+            btn_eliminar
         ])), padding=20, bgcolor=THEME["bg"], expand=True)
     ], scroll="auto")
 
@@ -941,7 +923,6 @@ def view_student_detail(page: ft.Page):
     stats = AttendanceService.get_stats(aid)
     history = AttendanceService.get_history(aid)
     
-    # --- EXPORTAR INDIVIDUAL ---
     export_range_ind = {"start": "", "end": ""}
 
     def download_individual(e):
@@ -995,7 +976,6 @@ def view_student_detail(page: ft.Page):
         ft.Row([ft.Icon("phone", size=16), ft.Text(f"Tutor: {alumno['tutor_nombre'] or '-'} ({alumno['tutor_telefono'] or '-'})")])
     ]))
 
-    # --- BLOQUE 2: ESTADÍSTICAS ACTUALIZADO (DOBLE ESCOLARIDAD) ---
     def stat_box(label, value, color):
         return ft.Container(
             content=ft.Column([ft.Text(str(value), size=20, weight="bold", color=color), ft.Text(label, size=11, color="grey")], horizontal_alignment="center"),
@@ -1005,20 +985,15 @@ def view_student_detail(page: ft.Page):
     card_stats = UIHelper.create_card(ft.Column([
         ft.Text("Estadísticas del Ciclo", weight="bold"),
         ft.Container(height=10),
-        # Fila 1: Básicos
         ft.Row([stat_box("Presentes", stats['p'], "green"), stat_box("Ausentes", stats['a'], "red"), stat_box("Faltas Tot.", stats['faltas'], "text")]),
         ft.Container(height=5),
-        # Fila 2: Tardes
         ft.Row([stat_box("Tarde Mañ.", stats['tm'], "orange"), stat_box("Tarde Tar.", stats['tt'], "orange")]),
         ft.Container(height=5),
-        # Fila 3: Medias Faltas
         ft.Row([stat_box("½ F. Mañ.", stats['mfm'], "deeporange"), stat_box("½ F. Tar.", stats['mft'], "deeporange")]),
         ft.Container(height=5),
-        # Fila 4: Extra
         ft.Row([stat_box("Justif.", stats['j'], "blue"), stat_box("Suspen.", stats['s'], "purple")])
     ]))
 
-    # --- BLOQUE 3: DOCS ---
     docs_col = ft.Column()
     reqs = DocService.get_requisitos_curso(alumno['curso_id'])
     estados = DocService.get_estado_alumno(aid)
@@ -1030,7 +1005,6 @@ def view_student_detail(page: ft.Page):
     
     card_docs = UIHelper.create_card(ft.Column([ft.Text("Legajo / Documentación", weight="bold"), ft.Divider(), docs_col]))
 
-    # --- BLOQUE 4: HISTORIAL ---
     hist_col = ft.Column([ft.Text(f"{h['fecha']}: {h['status']}", size=14) for h in history], scroll="auto", height=200)
     card_hist = UIHelper.create_card(ft.Column([
         ft.Row([ft.Text("Historial Completo", weight="bold"), ft.IconButton("file_download", icon_color="green", tooltip="Exportar Excel", on_click=open_export_ind)], alignment="spaceBetween"),
