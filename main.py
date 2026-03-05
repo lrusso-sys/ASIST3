@@ -9,7 +9,7 @@ import io
 import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v12.0 (Importar Excel) ---", flush=True)
+print("--- Oñepyrũ aplicación v11.0 (Doble Escolaridad + Eliminar) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -17,17 +17,6 @@ try:
 except ImportError:
     xlsxwriter = None
     print("⚠️ URGENTE: XlsxWriter NO está instalado.")
-
-# NUEVA DEPENDENCIA: openpyxl para leer excels
-try:
-    import openpyxl
-    print("✅ Librería OpenPyXL detectada.")
-except ImportError:
-    openpyxl = None
-    print("⚠️ URGENTE: OpenPyXL NO está instalado. Agregalo a requirements.txt")
-
-# Directorio temporal para las subidas de archivos
-os.makedirs("uploads", exist_ok=True)
 
 # --- CONFIGURACIÓN UI ---
 THEME = {
@@ -305,38 +294,10 @@ class SchoolService:
         return db.execute("UPDATE Alumnos SET nombre=%s, dni=%s, observaciones=%s, tutor_nombre=%s, tutor_telefono=%s, tpp=%s, tpp_dias=%s WHERE id=%s", 
                           (data['nombre'], data['dni'], data['obs'], data['tn'], data['tt'], data['tpp'], data['tpp_dias'], aid))
 
+    # --- NUEVO: ELIMINAR ALUMNO ---
     @staticmethod
     def delete_alumno(aid):
         return db.execute("DELETE FROM Alumnos WHERE id = %s", (aid,))
-
-    # --- NUEVO: IMPORTAR EXCEL ---
-    @staticmethod
-    def import_alumnos_excel(curso_id, filepath):
-        if not openpyxl: 
-            raise Exception("Librería OpenPyXL no está instalada.")
-        
-        wb = openpyxl.load_workbook(filepath)
-        ws = wb.active
-        count = 0
-        
-        # Iteramos saltando la fila 1 (encabezados)
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            if row[0]: # Si hay un nombre en la primera columna
-                data = {
-                    'curso_id': curso_id,
-                    'nombre': str(row[0]).strip(),
-                    'dni': str(row[1]).strip() if len(row)>1 and row[1] is not None else "",
-                    'tn': str(row[2]).strip() if len(row)>2 and row[2] is not None else "",
-                    'tt': str(row[3]).strip() if len(row)>3 and row[3] is not None else "",
-                    'obs': str(row[4]).strip() if len(row)>4 and row[4] is not None else "Importado desde Excel",
-                    'tpp': 0,
-                    'tpp_dias': ""
-                }
-                # Intentamos guardar (si el alumno ya existe con ese nombre, add_alumno devolverá False por la restricción UNIQUE)
-                if SchoolService.add_alumno(data):
-                    count += 1
-                    
-        return count
 
 class DocService:
     @staticmethod
@@ -402,21 +363,29 @@ class AttendanceService:
     
     @staticmethod
     def _calc_stats(rows):
+        # --- FIX: NUEVOS ESTADOS DE DOBLE ESCOLARIDAD ---
+        # Dejamos la 'T' vieja por las dudas haya registros viejos y no explote
         c = {k: 0 for k in ['P','T','TM','TT','MFM','MFT','A','J','S','N']}
+        
         for r in rows:
             if r['status'] in c: 
                 c[r['status']] += 1
             else:
-                c[r['status']] = 1
-                
+                c[r['status']] = 1 # Fallback por si hay basura vieja
+        
+        # Matemática UNSAM Técnica:
+        # T, TM, TT = 0.25 (Llegadas Tarde)
+        # MFM, MFT = 0.5 (Medias Faltas)
         faltas = c['A'] + c['S'] + (c['T'] * 0.25) + (c['TM'] * 0.25) + (c['TT'] * 0.25) + (c['MFM'] * 0.5) + (c['MFT'] * 0.5)
+        
+        # Total de días que debió venir (ignoramos la N)
         total = sum(c[k] for k in ['P','T','TM','TT','MFM','MFT','A','J','S'])
         pct = (1 - (faltas / total)) * 100 if total > 0 else 100
         
         return {
             'p': c['P'], 
             'a': c['A'], 
-            't_old': c['T'], 
+            't_old': c['T'], # por las dudas
             'tm': c['TM'],
             'tt': c['TT'],
             'mfm': c['MFM'],
@@ -498,6 +467,7 @@ class ReportService:
             ws.write(5, 0, f"Presentes: {stats['p']}")
             ws.write(6, 0, f"Ausentes: {stats['a']}")
             
+            # --- NUEVOS CAMPOS EN EXCEL ---
             tardes_totales = stats['tm'] + stats['tt'] + stats['t_old']
             medias_faltas = stats['mfm'] + stats['mft']
             
@@ -513,10 +483,16 @@ class ReportService:
             for i, h in enumerate(historial, start=13):
                 ws.write(i, 0, h['fecha'], cell)
                 mapa = {
-                    'P': 'Presente', 'A': 'Ausente', 'T': 'Tarde (Legado)', 
-                    'TM': 'Tarde Mañana', 'TT': 'Tarde Tarde', 
-                    'MFM': 'Media Falta Mañana', 'MFT': 'Media Falta Tarde', 
-                    'S': 'Suspendido', 'J': 'Justificado', 'N': 'No Corresp.'
+                    'P': 'Presente', 
+                    'A': 'Ausente', 
+                    'T': 'Tarde (Legado)', 
+                    'TM': 'Tarde Mañana', 
+                    'TT': 'Tarde Tarde', 
+                    'MFM': 'Media Falta Mañana', 
+                    'MFT': 'Media Falta Tarde', 
+                    'S': 'Suspendido', 
+                    'J': 'Justificado', 
+                    'N': 'No Corresp.'
                 }
                 ws.write(i, 1, mapa.get(h['status'], h['status']), cell)
                 
@@ -661,39 +637,7 @@ def view_curso(page: ft.Page):
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
     
-    # --- IMPORTADOR EXCEL ---
-    def on_file_picked(e: ft.FilePickerResultEvent):
-        if e.files and len(e.files) > 0:
-            f = e.files[0]
-            # Genera la URL de subida temporal en el server de Render
-            upload_url = page.get_upload_url(f.name, 60)
-            file_picker.upload([ft.FilePickerUploadFile(f.name, upload_url=upload_url)])
-            UIHelper.show_snack(page, "🔄 Subiendo y leyendo archivo...")
-
-    def on_file_uploaded(e: ft.FilePickerUploadEvent):
-        if not e.error:
-            filepath = os.path.join("uploads", e.file_name)
-            try:
-                count = SchoolService.import_alumnos_excel(cid, filepath)
-                if count >= 0:
-                    UIHelper.show_snack(page, f"✅ Se importaron {count} alumnos nuevos.")
-                    load_alumnos()
-                else:
-                    UIHelper.show_snack(page, "❌ Ocurrió un error leyendo el Excel.", True)
-            except Exception as ex:
-                UIHelper.show_snack(page, f"❌ Error de formato: {ex}", True)
-            finally:
-                if os.path.exists(filepath):
-                    os.remove(filepath) # Limpiamos el archivo subido para no ocupar espacio
-        else:
-            UIHelper.show_snack(page, f"❌ Error subiendo: {e.error}", True)
-
-    # Limpiamos FilePickers viejos y agregamos el nuevo
-    page.overlay = [c for c in page.overlay if not isinstance(c, ft.FilePicker)]
-    file_picker = ft.FilePicker(on_result=on_file_picked, on_upload=on_file_uploaded)
-    page.overlay.append(file_picker)
-
-    # --- EXPORTADOR EXCEL ---
+    # --- EXPORTADOR ---
     def download_excel(e):
         start = export_range["start"]
         end = export_range["end"]
@@ -825,6 +769,7 @@ def view_curso(page: ft.Page):
 
             status_map = AttendanceService.get_day_status(cid, date_tf.value)
             
+            # --- NUEVAS OPCIONES DE ASISTENCIA EN EL DESPLEGABLE ---
             opciones_asistencia = ["P", "TM", "TT", "MFM", "MFT", "A", "J", "S", "N"]
             
             for a in SchoolService.get_alumnos(cid):
@@ -839,6 +784,7 @@ def view_curso(page: ft.Page):
                         pass
                 
                 val = status_map.get(a['id'], def_val)
+                # Si por alguna razon quedó la T vieja en la DB, la mapeamos a TM para que no rompa el frontend
                 if val == "T": val = "TM" 
                 
                 dd = ft.Dropdown(
@@ -883,16 +829,8 @@ def view_curso(page: ft.Page):
 
     date_tf.on_change = load_asist
 
-    # Bóton de Importación
-    btn_importar = ft.ElevatedButton("Importar Excel", icon="upload_file", bgcolor="blue", color="white", on_click=lambda _: file_picker.pick_files(allowed_extensions=["xlsx"]))
-
     tabs = ft.Tabs(selected_index=0, tabs=[
-        ft.Tab(text="Alumnos", icon="people", content=ft.Container(
-            content=ft.Column([
-                ft.Row([ft.Text("Lista del Curso", weight="bold", size=16, expand=True), btn_importar]),
-                ft.Divider(),
-                lv
-            ]), padding=10)),
+        ft.Tab(text="Alumnos", icon="people", content=ft.Container(content=lv, padding=10)),
         ft.Tab(text="Asistencia", icon="check_circle", content=ft.Container(
             content=ft.Column([
                 ft.Row([date_tf, ft.IconButton("refresh", on_click=load_asist)]), 
@@ -961,6 +899,7 @@ def view_form_student(page: ft.Page):
         else: SchoolService.add_alumno(data)
         page.go("/curso")
 
+    # --- NUEVO: FUNCIONALIDAD ELIMINAR ---
     def delete_student(e):
         if is_edit:
             SchoolService.delete_alumno(aid)
@@ -989,7 +928,7 @@ def view_form_student(page: ft.Page):
             ft.Container(height=10),
             ft.ElevatedButton("Guardar", on_click=save, width=float("inf"), bgcolor=THEME["primary"], color="white"),
             ft.Container(height=10),
-            btn_eliminar
+            btn_eliminar # Botón de eliminar (solo si estamos editando)
         ])), padding=20, bgcolor=THEME["bg"], expand=True)
     ], scroll="auto")
 
@@ -1002,6 +941,7 @@ def view_student_detail(page: ft.Page):
     stats = AttendanceService.get_stats(aid)
     history = AttendanceService.get_history(aid)
     
+    # --- EXPORTAR INDIVIDUAL ---
     export_range_ind = {"start": "", "end": ""}
 
     def download_individual(e):
@@ -1055,6 +995,7 @@ def view_student_detail(page: ft.Page):
         ft.Row([ft.Icon("phone", size=16), ft.Text(f"Tutor: {alumno['tutor_nombre'] or '-'} ({alumno['tutor_telefono'] or '-'})")])
     ]))
 
+    # --- BLOQUE 2: ESTADÍSTICAS ACTUALIZADO (DOBLE ESCOLARIDAD) ---
     def stat_box(label, value, color):
         return ft.Container(
             content=ft.Column([ft.Text(str(value), size=20, weight="bold", color=color), ft.Text(label, size=11, color="grey")], horizontal_alignment="center"),
@@ -1064,15 +1005,20 @@ def view_student_detail(page: ft.Page):
     card_stats = UIHelper.create_card(ft.Column([
         ft.Text("Estadísticas del Ciclo", weight="bold"),
         ft.Container(height=10),
+        # Fila 1: Básicos
         ft.Row([stat_box("Presentes", stats['p'], "green"), stat_box("Ausentes", stats['a'], "red"), stat_box("Faltas Tot.", stats['faltas'], "text")]),
         ft.Container(height=5),
+        # Fila 2: Tardes
         ft.Row([stat_box("Tarde Mañ.", stats['tm'], "orange"), stat_box("Tarde Tar.", stats['tt'], "orange")]),
         ft.Container(height=5),
+        # Fila 3: Medias Faltas
         ft.Row([stat_box("½ F. Mañ.", stats['mfm'], "deeporange"), stat_box("½ F. Tar.", stats['mft'], "deeporange")]),
         ft.Container(height=5),
+        # Fila 4: Extra
         ft.Row([stat_box("Justif.", stats['j'], "blue"), stat_box("Suspen.", stats['s'], "purple")])
     ]))
 
+    # --- BLOQUE 3: DOCS ---
     docs_col = ft.Column()
     reqs = DocService.get_requisitos_curso(alumno['curso_id'])
     estados = DocService.get_estado_alumno(aid)
@@ -1084,6 +1030,7 @@ def view_student_detail(page: ft.Page):
     
     card_docs = UIHelper.create_card(ft.Column([ft.Text("Legajo / Documentación", weight="bold"), ft.Divider(), docs_col]))
 
+    # --- BLOQUE 4: HISTORIAL ---
     hist_col = ft.Column([ft.Text(f"{h['fecha']}: {h['status']}", size=14) for h in history], scroll="auto", height=200)
     card_hist = UIHelper.create_card(ft.Column([
         ft.Row([ft.Text("Historial Completo", weight="bold"), ft.IconButton("file_download", icon_color="green", tooltip="Exportar Excel", on_click=open_export_ind)], alignment="spaceBetween"),
@@ -1262,7 +1209,6 @@ def main(page: ft.Page):
 if __name__ == "__main__":
     port_env = os.environ.get("PORT")
     if port_env:
-        # Agregamos upload_dir para que Flet sepa donde guardar el archivo temporal en la web
-        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0", upload_dir="uploads")
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
     else:
-        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550, upload_dir="uploads")
+        ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
