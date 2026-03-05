@@ -9,7 +9,7 @@ import io
 import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v11.1 (Mobile Visibility Fix) ---", flush=True)
+print("--- Oñepyrũ aplicación v11.2 (Fix Mobile UI) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -709,7 +709,7 @@ def view_curso(page: ft.Page):
         page.open(dlg_reqs)
 
     # --- UI Principal ---
-    lv = ft.Column(scroll="auto", expand=True) # Este es el que maneja el scroll de alumnos
+    lv = ft.Column(scroll="auto", expand=True)
     def load_alumnos():
         try:
             lv.controls.clear()
@@ -729,13 +729,16 @@ def view_curso(page: ft.Page):
                     on_click=det,
                     trailing=ft.IconButton("edit", on_click=edt)
                 ), padding=0))
+            
+            # FIX ESPACIADOR ALUMNOS (para que el boton no los tape)
+            lv.controls.append(ft.Container(height=80))
             page.update()
         except Exception as e:
             lv.controls.append(ft.Text(f"Error cargando lista: {e}", color="red"))
             page.update()
 
     date_tf = ft.TextField(label="Fecha", value=date.today().isoformat(), width=150, height=40, text_size=14)
-    asist_col = ft.Column(scroll="auto", expand=True) # Este maneja el scroll de asistencia
+    asist_col = ft.Column(scroll="auto", expand=True)
     
     def load_asist(e=None):
         try:
@@ -769,12 +772,19 @@ def view_curso(page: ft.Page):
                 val = status_map.get(a['id'], def_val)
                 if val == "T": val = "TM" 
                 
+                # FIX TEXTO CORTADO EN CELULARES (le sacamos el height=40 y metimos content_padding)
                 dd = ft.Dropdown(
-                    width=100, height=40, text_size=14, value=val,
+                    width=95, 
+                    text_size=13, 
+                    value=val,
+                    content_padding=ft.padding.symmetric(horizontal=10, vertical=5),
                     options=[ft.dropdown.Option(x) for x in opciones_asistencia], 
                     on_change=lambda e, aid=a['id']: AttendanceService.mark(aid, date_tf.value, e.control.value)
                 )
                 asist_col.controls.append(ft.Container(content=ft.Row([ft.Text(a['nombre'] or "?", expand=True, weight="w500"), dd]), padding=5, border=ft.border.only(bottom=ft.border.BorderSide(1, "grey200"))))
+            
+            # FIX ESPACIADOR ASISTENCIA (para que el boton no los tape)
+            asist_col.controls.append(ft.Container(height=100))
             page.update()
         except Exception as e:
             asist_col.controls.append(ft.Text(f"Error carga asistencia: {e}", color="red"))
@@ -818,7 +828,7 @@ def view_curso(page: ft.Page):
                 ft.Row([date_tf, ft.IconButton("refresh", on_click=load_asist)]), 
                 ft.Divider(), 
                 asist_col
-            ], expand=True), padding=10)) # FIX: expand=True en el Column interno
+            ], expand=True), padding=10)) 
     ], expand=True, on_change=lambda e: (load_alumnos() if e.control.selected_index==0 else load_asist()))
 
     load_alumnos()
@@ -850,7 +860,6 @@ def view_curso(page: ft.Page):
 
     tabs.on_change = on_tab_change
 
-    # FIX VITAL: ft.View sin scroll="auto" para que el expand de las Tabs funcione
     return ft.View("/curso", [
         UIHelper.create_header(cn, "Gestión", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard")), actions=actions_header),
         ft.Container(content=tabs, expand=True, bgcolor=THEME["bg"])
