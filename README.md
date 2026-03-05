@@ -1,197 +1,92 @@
-# Migración a PostgreSQL - Guía de Deploy
+🏫 Sistema de Gestión de Asistencia - ETEC UNSAM
+Este proyecto es un sistema web mobile-friendly desarrollado para digitalizar, agilizar y centralizar la toma de asistencia y la gestión de legajos de alumnos en la Escuela Secundaria Técnica de la UNSAM. Está diseñado específicamente para facilitar el trabajo diario de los preceptores, permitiendo la carga de datos directamente desde el patio o el aula usando un celular.
 
-## Cambios Realizados
+✨ Características Principales
+📱 Diseño Responsivo: Interfaz optimizada para celulares y computadoras de escritorio.
 
-### 1. DatabaseManager Migrado a PostgreSQL
+👥 Roles de Usuario: Accesos diferenciados para Administradores (configuración de ciclos, cursos y usuarios) y Preceptores (toma de lista y gestión de sus cursos asignados).
 
-| Aspecto | SQLite | PostgreSQL |
-|---------|--------|------------|
-| Librería | `sqlite3` | `psycopg2` |
-| Placeholders | `?` | `%s` |
-| Autoincremental | `INTEGER PRIMARY KEY AUTOINCREMENT` | `SERIAL PRIMARY KEY` |
-| Booleanos | `0/1` | `TRUE/FALSE` |
-| Upsert | `INSERT OR REPLACE` | `ON CONFLICT ... DO UPDATE` |
-| Búsqueda case-insensitive | `LIKE` | `ILIKE` |
+✅ Toma de Asistencia Inteligente:
 
-### 2. Conexión a Base de Datos
+Cálculo automático de inasistencias adaptado a jornadas de doble escolaridad:
 
-```python
-# Render proporciona DATABASE_URL automáticamente
-database_url = os.environ.get('DATABASE_URL')
+Presente, Ausente, Justificado, Suspendido.
 
-# Para desarrollo local, usa variables de entorno:
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=asistencia_db
-DB_USER=postgres
-DB_PASSWORD=password
-```
+Llegadas Tarde (TM/TT) = 0.25 faltas.
 
----
+Medias Faltas (MFM/MFT) = 0.5 faltas.
 
-## 🚀 Instrucciones de Deploy en Render
+Guardado automático ("el que calla otorga") para agilizar la toma de lista.
 
-### Paso 1: Crear Base de Datos PostgreSQL
+⚠️ Trayectorias Personalizadas (TPP): Soporte para alumnos que solo asisten días específicos de la semana (se anula la falta los días que no les corresponde ir).
 
-1. Ve a tu dashboard de Render
-2. Click en **"New"** → **"PostgreSQL"**
-3. Configura:
-   - **Name**: `asistencia-db`
-   - **Database**: `asistencia_db`
-   - **User**: `asistencia_user`
-   - **Plan**: Free
-4. Click **"Create Database"**
+📅 Gestión de Feriados: El sistema alerta a los preceptores si intentan tomar asistencia en un día feriado o fin de semana.
 
-### Paso 2: Crear Web Service
+📂 Gestión de Legajos: Control de entrega de documentación respaldatoria por curso.
 
-1. Click en **"New"** → **"Web Service"**
-2. Conecta tu repositorio de GitHub/GitLab
-3. Configura:
-   - **Name**: `asistencia-unsam`
-   - **Runtime**: Python 3
-   - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `python main.py`
+📥 Importación Masiva: Carga rápida de listas de alumnos mediante archivos Excel (.xlsx).
 
-### Paso 3: Variables de Entorno
+📊 Exportación de Reportes: Generación automática de informes en Excel tanto a nivel Curso (resumen) como a nivel Alumno (historial detallado).
 
-Render configura `DATABASE_URL` automáticamente cuando vinculas la base de datos.
+🛠️ Tecnologías Utilizadas
+Backend & Frontend: Python + Flet (Framework UI).
 
-Si necesitas configurar manualmente (desarrollo local):
+Base de Datos: PostgreSQL.
 
-```bash
-# Linux/Mac
-export DB_HOST=localhost
-export DB_PORT=5432
-export DB_NAME=asistencia_db
-export DB_USER=postgres
-export DB_PASSWORD=tu_password
+Manejo de Excels: xlsxwriter (exportación) y openpyxl (importación).
 
-# Windows
-set DB_HOST=localhost
-set DB_PORT=5432
-set DB_NAME=asistencia_db
-set DB_USER=postgres
-set DB_PASSWORD=tu_password
-```
+Despliegue: Preparado para funcionar en la nube (Ej: Render, Railway, Heroku).
 
----
+🚀 Instalación y Uso Local
+Si querés correr el proyecto en tu propia computadora para hacer pruebas:
 
-## 📁 Archivos a Subir
+Clonar el repositorio y crear un entorno virtual:
 
-```
-.
-├── main.py              # Código principal (renombrado de main_postgres.py)
-├── requirements.txt     # Dependencias (renombrado de requirements_postgres.txt)
-└── render.yaml          # Opcional - config como código
-```
+Bash
+git clone <tu-repo-url>
+cd asistencia-unsam
+python -m venv venv
+source venv/Scripts/activate  # En Windows
+# source venv/bin/activate    # En Linux/Mac
+Instalar las dependencias:
+Asegurate de tener un archivo requirements.txt con lo siguiente:
 
----
+Plaintext
+flet
+psycopg2-binary
+xlsxwriter
+openpyxl
+Luego ejecutá:
 
-## 🧪 Prueba Local con PostgreSQL
-
-### 1. Instalar PostgreSQL
-
-**Ubuntu/Debian:**
-```bash
-sudo apt update
-sudo apt install postgresql postgresql-contrib
-```
-
-**Mac (Homebrew):**
-```bash
-brew install postgresql
-brew services start postgresql
-```
-
-**Windows:**
-Descarga el instalador de https://www.postgresql.org/download/windows/
-
-### 2. Crear Base de Datos
-
-```bash
-sudo -u postgres psql
-
-CREATE DATABASE asistencia_db;
-CREATE USER asistencia_user WITH PASSWORD 'tu_password';
-GRANT ALL PRIVILEGES ON DATABASE asistencia_db TO asistencia_user;
-\q
-```
-
-### 3. Configurar Variables de Entorno
-
-```bash
-export DB_HOST=localhost
-export DB_PORT=5432
-export DB_NAME=asistencia_db
-export DB_USER=asistencia_user
-export DB_PASSWORD=tu_password
-```
-
-### 4. Instalar Dependencias y Ejecutar
-
-```bash
+Bash
 pip install -r requirements.txt
+Configurar la Base de Datos:
+El sistema requiere PostgreSQL. Podés usar una base de datos local o en la nube. Configurá la variable de entorno:
+
+DATABASE_URL = postgresql://usuario:clave@host:puerto/nombre_db
+
+Ejecutar la aplicación:
+
+Bash
 python main.py
-```
+(Nota: Al iniciar por primera vez con una base de datos vacía, el sistema creará automáticamente las tablas y un usuario administrador por defecto: Usuario admin, Clave admin).
 
----
+📄 Formato para Importar Alumnos (Excel)
+Para hacer una carga masiva de estudiantes, el preceptor debe subir un archivo .xlsx. La primera fila (encabezados) es ignorada por el sistema. El orden estricto de las columnas debe ser:
 
-## ✅ Ventajas de PostgreSQL sobre SQLite
+Columna A: Nombre Completo (Obligatorio)
 
-| Característica | SQLite | PostgreSQL |
-|----------------|--------|------------|
-| **Persistencia** | ❌ Se borra al reiniciar | ✅ Datos persistentes |
-| **Concurrencia** | ⚠️ Limitada | ✅ Alta concurrencia |
-| **Escalabilidad** | ❌ Local solo | ✅ Escalable |
-| **Backups** | ❌ Manual | ✅ Automáticos en Render |
-| **Múltiples usuarios** | ⚠️ Problemas | ✅ Sin problemas |
+Columna B: DNI
 
----
+Columna C: Nombre del Tutor
 
-## 🔧 Troubleshooting
+Columna D: Teléfono del Tutor
 
-### Error: "database does not exist"
-```bash
-# Crear la base de datos manualmente
-sudo -u postgres createdb asistencia_db
-```
+Columna E: Observaciones
 
-### Error: "password authentication failed"
-```bash
-# Verificar usuario y contraseña
-sudo -u postgres psql -c "\du"
-```
+🔒 Seguridad
+Las contraseñas de los usuarios se encriptan en la base de datos mediante hashing SHA-256.
 
-### Error: "could not connect to server"
-```bash
-# Verificar que PostgreSQL está corriendo
-sudo systemctl status postgresql
-```
+Cambio de clave habilitado desde el panel principal para todos los usuarios.
 
-### Error en Render: "DATABASE_URL not found"
-- Asegúrate de haber vinculado la base de datos al web service
-- Ve a Settings → Environment → Link Database
-
----
-
-## 📊 Estructura de la Base de Datos
-
-```sql
--- Tablas creadas automáticamente
-Usuarios (id, username, password, role)
-Ciclos (id, nombre, activo)
-Cursos (id, nombre, ciclo_id)
-Alumnos (id, curso_id, nombre, dni, observaciones, tutor_nombre, tutor_telefono)
-Asistencia (id, alumno_id, fecha, status)
-Requisitos (id, curso_id, descripcion)
-Requisitos_Cumplidos (requisito_id, alumno_id)
-```
-
----
-
-## 📝 Notas Importantes
-
-1. **Datos semilla**: El usuario `admin` con contraseña `admin` se crea automáticamente
-2. **Ciclo activo**: Se crea automáticamente con el año actual
-3. **SSL**: La conexión usa `sslmode='require'` en producción (Render)
-4. **Migraciones**: Las tablas se crean automáticamente al iniciar la app
+Desarrollado para modernizar la gestión escolar. 🚀
