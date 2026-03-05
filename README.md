@@ -1,4 +1,5 @@
 🏫 Sistema de Gestión de Asistencia - ETEC UNSAM
+
 Este proyecto es un sistema web mobile-friendly desarrollado para digitalizar, agilizar y centralizar la toma de asistencia y la gestión de legajos de alumnos en la Escuela Secundaria Técnica de la UNSAM. Está diseñado específicamente para facilitar el trabajo diario de los preceptores, permitiendo la carga de datos directamente desde el patio o el aula usando un celular.
 
 ✨ Características Principales
