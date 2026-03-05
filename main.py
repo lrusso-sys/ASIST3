@@ -9,7 +9,7 @@ import io
 import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v10.0 (Feriados + Excel Tardes) ---", flush=True)
+print("--- Oñepyrũ aplicación v11.0 (Doble Escolaridad + Eliminar) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -135,7 +135,6 @@ class DatabaseManager:
                 cur.execute("CREATE TABLE IF NOT EXISTS Requisitos (id SERIAL PRIMARY KEY, curso_id INTEGER REFERENCES Cursos(id) ON DELETE CASCADE, descripcion TEXT)")
                 cur.execute("CREATE TABLE IF NOT EXISTS Documentacion_Alumno (requisito_id INTEGER REFERENCES Requisitos(id) ON DELETE CASCADE, alumno_id INTEGER REFERENCES Alumnos(id) ON DELETE CASCADE, entregado INTEGER DEFAULT 0, PRIMARY KEY (requisito_id, alumno_id))")
                 
-                # --- NUEVA TABLA FERIADOS ---
                 cur.execute("CREATE TABLE IF NOT EXISTS Feriados (id SERIAL PRIMARY KEY, fecha TEXT UNIQUE, descripcion TEXT)")
 
                 cur.execute("SELECT COUNT(*) FROM Usuarios")
@@ -295,6 +294,11 @@ class SchoolService:
         return db.execute("UPDATE Alumnos SET nombre=%s, dni=%s, observaciones=%s, tutor_nombre=%s, tutor_telefono=%s, tpp=%s, tpp_dias=%s WHERE id=%s", 
                           (data['nombre'], data['dni'], data['obs'], data['tn'], data['tt'], data['tpp'], data['tpp_dias'], aid))
 
+    # --- NUEVO: ELIMINAR ALUMNO ---
+    @staticmethod
+    def delete_alumno(aid):
+        return db.execute("DELETE FROM Alumnos WHERE id = %s", (aid,))
+
 class DocService:
     @staticmethod
     def get_requisitos_curso(curso_id):
@@ -359,17 +363,38 @@ class AttendanceService:
     
     @staticmethod
     def _calc_stats(rows):
-        c = {k: 0 for k in ['P','T','A','J','S','N']}
-        for r in rows:
-            if r['status'] in c: c[r['status']] += 1
+        # --- FIX: NUEVOS ESTADOS DE DOBLE ESCOLARIDAD ---
+        # Dejamos la 'T' vieja por las dudas haya registros viejos y no explote
+        c = {k: 0 for k in ['P','T','TM','TT','MFM','MFT','A','J','S','N']}
         
-        faltas = c['A'] + c['S'] + (c['T'] * 0.25) 
-        total = sum(c[k] for k in ['P','T','A','J','S'])
+        for r in rows:
+            if r['status'] in c: 
+                c[r['status']] += 1
+            else:
+                c[r['status']] = 1 # Fallback por si hay basura vieja
+        
+        # Matemática UNSAM Técnica:
+        # T, TM, TT = 0.25 (Llegadas Tarde)
+        # MFM, MFT = 0.5 (Medias Faltas)
+        faltas = c['A'] + c['S'] + (c['T'] * 0.25) + (c['TM'] * 0.25) + (c['TT'] * 0.25) + (c['MFM'] * 0.5) + (c['MFT'] * 0.5)
+        
+        # Total de días que debió venir (ignoramos la N)
+        total = sum(c[k] for k in ['P','T','TM','TT','MFM','MFT','A','J','S'])
         pct = (1 - (faltas / total)) * 100 if total > 0 else 100
         
         return {
-            'p': c['P'], 'a': c['A'], 't': c['T'], 'j': c['J'], 's': c['S'],
-            'faltas': faltas, 'pct': round(pct, 1), 'total': total
+            'p': c['P'], 
+            'a': c['A'], 
+            't_old': c['T'], # por las dudas
+            'tm': c['TM'],
+            'tt': c['TT'],
+            'mfm': c['MFM'],
+            'mft': c['MFT'],
+            'j': c['J'], 
+            's': c['S'],
+            'faltas': faltas, 
+            'pct': round(pct, 1), 
+            'total': total
         }
 
     @staticmethod
@@ -441,18 +466,34 @@ class ReportService:
             ws.write(4, 0, "RESUMEN DEL PERIODO", bold)
             ws.write(5, 0, f"Presentes: {stats['p']}")
             ws.write(6, 0, f"Ausentes: {stats['a']}")
-            # --- NUEVO: TARDES EN EXCEL ---
-            ws.write(7, 0, f"Llegadas Tarde: {stats['t']}") 
-            ws.write(8, 0, f"Faltas Totales: {stats['faltas']}")
-            ws.write(9, 0, f"Porcentaje: {stats['pct']}%")
             
-            ws.write(11, 0, "Fecha", header)
-            ws.write(11, 1, "Estado", header)
+            # --- NUEVOS CAMPOS EN EXCEL ---
+            tardes_totales = stats['tm'] + stats['tt'] + stats['t_old']
+            medias_faltas = stats['mfm'] + stats['mft']
+            
+            ws.write(7, 0, f"Llegadas Tarde (Totales): {tardes_totales}") 
+            ws.write(8, 0, f"Medias Faltas (Totales): {medias_faltas}") 
+            ws.write(9, 0, f"Faltas Computadas: {stats['faltas']}")
+            ws.write(10, 0, f"Porcentaje: {stats['pct']}%")
+            
+            ws.write(12, 0, "Fecha", header)
+            ws.write(12, 1, "Estado", header)
             ws.set_column(0, 0, 15)
             
-            for i, h in enumerate(historial, start=12):
+            for i, h in enumerate(historial, start=13):
                 ws.write(i, 0, h['fecha'], cell)
-                mapa = {'P': 'Presente', 'A': 'Ausente', 'T': 'Tarde', 'S': 'Suspendido', 'J': 'Justificado', 'N': 'No Corresp.'}
+                mapa = {
+                    'P': 'Presente', 
+                    'A': 'Ausente', 
+                    'T': 'Tarde (Legado)', 
+                    'TM': 'Tarde Mañana', 
+                    'TT': 'Tarde Tarde', 
+                    'MFM': 'Media Falta Mañana', 
+                    'MFT': 'Media Falta Tarde', 
+                    'S': 'Suspendido', 
+                    'J': 'Justificado', 
+                    'N': 'No Corresp.'
+                }
                 ws.write(i, 1, mapa.get(h['status'], h['status']), cell)
                 
             workbook.close()
@@ -718,7 +759,6 @@ def view_curso(page: ft.Page):
             try:
                 d_obj = date.fromisoformat(date_tf.value)
                 dia_sem = d_obj.weekday()
-                # --- NUEVO: CHECK FERIADOS ---
                 feriado = HolidayService.check_feriado(date_tf.value)
                 
                 if feriado:
@@ -728,6 +768,10 @@ def view_curso(page: ft.Page):
             except: dia_sem = -1
 
             status_map = AttendanceService.get_day_status(cid, date_tf.value)
+            
+            # --- NUEVAS OPCIONES DE ASISTENCIA EN EL DESPLEGABLE ---
+            opciones_asistencia = ["P", "TM", "TT", "MFM", "MFT", "A", "J", "S", "N"]
+            
             for a in SchoolService.get_alumnos(cid):
                 def_val = "P"
                 
@@ -740,9 +784,12 @@ def view_curso(page: ft.Page):
                         pass
                 
                 val = status_map.get(a['id'], def_val)
+                # Si por alguna razon quedó la T vieja en la DB, la mapeamos a TM para que no rompa el frontend
+                if val == "T": val = "TM" 
+                
                 dd = ft.Dropdown(
                     width=100, height=40, text_size=14, value=val,
-                    options=[ft.dropdown.Option(x) for x in ["P","T","A","J","S","N"]], 
+                    options=[ft.dropdown.Option(x) for x in opciones_asistencia], 
                     on_change=lambda e, aid=a['id']: AttendanceService.mark(aid, date_tf.value, e.control.value)
                 )
                 asist_col.controls.append(ft.Container(content=ft.Row([ft.Text(a['nombre'] or "?", expand=True, weight="w500"), dd]), padding=5, border=ft.border.only(bottom=ft.border.BorderSide(1, "grey200"))))
@@ -780,7 +827,6 @@ def view_curso(page: ft.Page):
         except Exception as ex:
             UIHelper.show_snack(page, f"Error al guardar: {ex}", True)
 
-    # Cuando cambia la fecha en el input, recargamos la lista para chequear feriados
     date_tf.on_change = load_asist
 
     tabs = ft.Tabs(selected_index=0, tabs=[
@@ -853,13 +899,36 @@ def view_form_student(page: ft.Page):
         else: SchoolService.add_alumno(data)
         page.go("/curso")
 
+    # --- NUEVO: FUNCIONALIDAD ELIMINAR ---
+    def delete_student(e):
+        if is_edit:
+            SchoolService.delete_alumno(aid)
+            page.close(dlg_confirm)
+            page.go("/curso")
+            UIHelper.show_snack(page, "🗑️ Alumno eliminado correctamente.")
+
+    dlg_confirm = ft.AlertDialog(
+        title=ft.Text("⚠️ Peligro"),
+        content=ft.Text("¿Estás seguro que querés eliminar a este alumno? Se perderá todo su historial de asistencia y documentación."),
+        actions=[
+            ft.TextButton("Cancelar", on_click=lambda e: page.close(dlg_confirm)),
+            ft.ElevatedButton("Sí, Eliminar", on_click=delete_student, bgcolor="red", color="white")
+        ]
+    )
+
+    btn_eliminar = ft.Container()
+    if is_edit:
+        btn_eliminar = ft.ElevatedButton("Eliminar Alumno", icon="delete", bgcolor="red", color="white", width=float("inf"), on_click=lambda e: page.open(dlg_confirm))
+
     return ft.View("/form_student", [
         UIHelper.create_header("Alumno", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso"))),
         ft.Container(content=UIHelper.create_card(ft.Column([
             nm, dn, ft.Divider(), tn, tt, ft.Divider(), ob, ft.Divider(),
             ft.Container(content=ft.Column([sw_tpp, cont_days]), bgcolor="blue50", padding=10, border_radius=10),
             ft.Container(height=10),
-            ft.ElevatedButton("Guardar", on_click=save, width=float("inf"), bgcolor=THEME["primary"], color="white")
+            ft.ElevatedButton("Guardar", on_click=save, width=float("inf"), bgcolor=THEME["primary"], color="white"),
+            ft.Container(height=10),
+            btn_eliminar # Botón de eliminar (solo si estamos editando)
         ])), padding=20, bgcolor=THEME["bg"], expand=True)
     ], scroll="auto")
 
@@ -911,7 +980,6 @@ def view_student_detail(page: ft.Page):
         )
         page.open(dlg)
 
-    # --- SAFETY FIX: Avatar Check ---
     initial = alumno['nombre'][0] if (alumno['nombre'] and len(alumno['nombre']) > 0) else "?"
 
     card_info = UIHelper.create_card(ft.Column([
@@ -920,7 +988,6 @@ def view_student_detail(page: ft.Page):
             ft.Column([
                 ft.Text(alumno['nombre'] or "Sin Nombre", size=22, weight="bold"),
                 ft.Text(f"DNI: {alumno['dni'] or '-'}", size=16, color="grey"),
-                # --- FIX CHIP ---
                 ft.Chip(label=ft.Text("TPP Activo", color="white"), bgcolor="orange") if alumno['tpp']==1 else ft.Container()
             ])
         ]),
@@ -928,19 +995,27 @@ def view_student_detail(page: ft.Page):
         ft.Row([ft.Icon("phone", size=16), ft.Text(f"Tutor: {alumno['tutor_nombre'] or '-'} ({alumno['tutor_telefono'] or '-'})")])
     ]))
 
-    # --- BLOQUE 2: ESTADÍSTICAS ---
+    # --- BLOQUE 2: ESTADÍSTICAS ACTUALIZADO (DOBLE ESCOLARIDAD) ---
     def stat_box(label, value, color):
         return ft.Container(
-            content=ft.Column([ft.Text(str(value), size=24, weight="bold", color=color), ft.Text(label, size=11, color="grey")], horizontal_alignment="center"),
+            content=ft.Column([ft.Text(str(value), size=20, weight="bold", color=color), ft.Text(label, size=11, color="grey")], horizontal_alignment="center"),
             padding=10, bgcolor="white", border_radius=8, border=ft.border.all(1, "grey200"), expand=True
         )
 
     card_stats = UIHelper.create_card(ft.Column([
         ft.Text("Estadísticas del Ciclo", weight="bold"),
         ft.Container(height=10),
-        ft.Row([stat_box("Presentes", stats['p'], "green"), stat_box("Ausentes", stats['a'], "red"), stat_box("Tardes", stats['t'], "orange")]),
+        # Fila 1: Básicos
+        ft.Row([stat_box("Presentes", stats['p'], "green"), stat_box("Ausentes", stats['a'], "red"), stat_box("Faltas Tot.", stats['faltas'], "text")]),
         ft.Container(height=5),
-        ft.Row([stat_box("Justif.", stats['j'], "blue"), stat_box("Suspen.", stats['s'], "purple"), stat_box("Faltas Tot.", stats['faltas'], "text")])
+        # Fila 2: Tardes
+        ft.Row([stat_box("Tarde Mañ.", stats['tm'], "orange"), stat_box("Tarde Tar.", stats['tt'], "orange")]),
+        ft.Container(height=5),
+        # Fila 3: Medias Faltas
+        ft.Row([stat_box("½ F. Mañ.", stats['mfm'], "deeporange"), stat_box("½ F. Tar.", stats['mft'], "deeporange")]),
+        ft.Container(height=5),
+        # Fila 4: Extra
+        ft.Row([stat_box("Justif.", stats['j'], "blue"), stat_box("Suspen.", stats['s'], "purple")])
     ]))
 
     # --- BLOQUE 3: DOCS ---
@@ -976,12 +1051,10 @@ def view_admin(page: ft.Page):
         ft.Container(content=ft.Column([
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("calendar_month", color=THEME["primary"]), title=ft.Text("Ciclos Lectivos"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/ciclos"))),
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("people", color=THEME["primary"]), title=ft.Text("Usuarios"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/users"))),
-            # --- NUEVO: LINK A FERIADOS ---
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("event_busy", color=THEME["primary"]), title=ft.Text("Feriados"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/feriados"))),
         ]), padding=20, bgcolor=THEME["bg"])
     ], scroll="auto")
 
-# --- NUEVA VISTA FERIADOS ---
 def view_feriados(page: ft.Page):
     tf_fecha = ft.TextField(label="Fecha (YYYY-MM-DD)", width=180)
     tf_desc = ft.TextField(label="Descripción (Ej: Dia del Maestro)", expand=True)
@@ -1109,7 +1182,7 @@ def main(page: ft.Page):
         "/admin": view_admin,
         "/ciclos": view_ciclos,
         "/users": view_users,
-        "/feriados": view_feriados # NUEVA RUTA
+        "/feriados": view_feriados
     }
 
     def route_change(route):
@@ -1139,26 +1212,3 @@ if __name__ == "__main__":
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0")
     else:
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
-# ==============================================================================
-# 🧨 ZONA DE LIMPIEZA V5 (REQUERIDO PARA ACTIVAR LOS NUEVOS CAMBIOS)
-# ==============================================================================
-#try:
- #   print("--- 🧹 LIMPIEZA DB PARA V5 (ESTRUCTURA NUEVA) ---")
- #   conn_fix = db.get_connection()
-  #  if conn_fix:
-   #     with conn_fix.cursor() as cur:
-    #        # Borramos para recrear porque cambio la tabla Requisitos
-     #       cur.execute("DROP TABLE IF EXISTS Asistencia CASCADE")
-      #      cur.execute("DROP TABLE IF EXISTS Alumnos CASCADE") 
-       #     cur.execute("DROP TABLE IF EXISTS Cursos CASCADE")
-        #    cur.execute("DROP TABLE IF EXISTS Ciclos CASCADE")
-         #   cur.execute("DROP TABLE IF EXISTS Usuario_Cursos CASCADE") 
-          #  cur.execute("DROP TABLE IF EXISTS Requisitos CASCADE")     
-           # cur.execute("DROP TABLE IF EXISTS Documentacion_Alumno CASCADE")
-            #conn_fix.commit()
-#        conn_fix.close()
- #       print("✅ TABLAS BORRADAS.")
-  #      print("🔨 RE-CREANDO ESTRUCTURA V5...")
-   #     db._init_db_structure()
-#except Exception as e:
- #   print(f"❌ ERROR EN LIMPIEZA: {e}")
