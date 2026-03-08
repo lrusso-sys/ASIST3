@@ -7,9 +7,10 @@ import os
 import threading
 import io
 import base64
+from urllib.parse import urlparse
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v12.4 (Fix Pantalla Blanca & FilePicker) ---", flush=True)
+print("--- Oñepyrũ aplicación v12.5 (Fix Subida Nube / Rutas Relativas) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -18,7 +19,6 @@ except ImportError:
     xlsxwriter = None
     print("⚠️ URGENTE: XlsxWriter NO está instalado.")
 
-# NUEVA DEPENDENCIA: openpyxl para leer excels
 try:
     import openpyxl
     print("✅ Librería OpenPyXL detectada.")
@@ -664,48 +664,49 @@ def view_curso(page: ft.Page):
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
 
-    # --- FIX 12.4: FILEPICKER INTEGRADO EN LA VISTA (SÚPER SEGURO) ---
+    # --- FIX 12.5: EL TRUCO DEL NAVEGADOR (URL RELATIVA) ---
     def on_excel_picked(e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
-            UIHelper.show_snack(page, "🔄 Preparando archivo...", is_error=False)
+            UIHelper.show_snack(page, "🔄 Preparando archivo para la nube...", is_error=False)
             
-            upload_url = page.get_upload_url(e.files[0].name, 60)
+            raw_url = page.get_upload_url(e.files[0].name, 60)
             
-            # Parche Render
-            render_url = os.environ.get("RENDER_EXTERNAL_URL")
-            if render_url:
-                from urllib.parse import urlparse
-                p = urlparse(upload_url)
-                upload_url = f"{render_url}{p.path}?{p.query}"
-            elif "0.0.0.0" in upload_url:
-                from urllib.parse import urlparse
-                p = urlparse(upload_url)
-                upload_url = f"{p.path}?{p.query}"
+            # Magia pura: Cortamos la URL para que quede relativa (ej: /upload/xyz)
+            # Así el navegador no se confunde con la IP interna de Render.
+            p = urlparse(raw_url)
+            relative_url = p.path
+            if p.query:
+                relative_url += "?" + p.query
             
-            file_picker.upload([ft.FilePickerUploadFile(e.files[0].name, upload_url=upload_url)])
+            file_picker.upload([ft.FilePickerUploadFile(e.files[0].name, upload_url=relative_url)])
             if len(page.views) > 0: page.update()
 
     def on_excel_uploaded(e: ft.FilePickerUploadEvent):
         if not e.error:
             filepath = os.path.join("uploads", e.file_name)
+            
+            # Verificación de seguridad
+            if not os.path.exists(filepath):
+                UIHelper.show_snack(page, "❌ Error de red: El archivo no llegó.", True)
+                return
+                
             try:
                 if not openpyxl:
-                    raise Exception("Falta instalar la librería 'openpyxl' en requirements.txt")
+                    raise Exception("Falta la librería 'openpyxl'.")
                     
                 count = SchoolService.import_alumnos_excel(cid, filepath)
-                UIHelper.show_snack(page, f"✅ ¡Se importaron {count} alumnos nuevos!")
+                UIHelper.show_snack(page, f"✅ ¡Exito! {count} alumnos importados.")
                 load_alumnos()
                 if len(page.views) > 0: page.update()
             except Exception as ex:
-                UIHelper.show_snack(page, f"❌ Error leyendo Excel: {ex}", True)
+                UIHelper.show_snack(page, f"❌ Archivo inválido: {ex}", True)
             finally:
                 if os.path.exists(filepath):
                     try: os.remove(filepath)
                     except: pass
         else:
-            UIHelper.show_snack(page, f"❌ Falló la subida: {e.error}", True)
+            UIHelper.show_snack(page, f"❌ Falló subida: {e.error}", True)
 
-    # El FilePicker se crea y luego se inserta ADENTRO de la vista, no más en el overlay
     file_picker = ft.FilePicker(on_result=on_excel_picked, on_upload=on_excel_uploaded)
 
     # --- EXPORTADOR ---
@@ -942,9 +943,8 @@ def view_curso(page: ft.Page):
 
     fab_inicial = ft.FloatingActionButton(icon="person_add", bgcolor=THEME["primary"], on_click=lambda _: (page.session.set("alumno_id_edit", None), page.go("/form_student")))
 
-    # FIX VITAL: El file_picker ahora está en la lista principal de controles de la vista, no en el overlay.
     return ft.View("/curso", [
-        file_picker, 
+        file_picker, # Acà esta el picker escondido de forma segura
         UIHelper.create_header(cn, "Gestión", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard")), actions=actions_header),
         ft.Container(content=tabs, expand=True, bgcolor=THEME["bg"])
     ], floating_action_button=fab_inicial)
