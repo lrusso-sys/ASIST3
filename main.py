@@ -9,7 +9,7 @@ import io
 import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v12.2 (Fix Pantalla Blanca & Excel) ---", flush=True)
+print("--- Oñepyrũ aplicación v12.3 (Fix Render Excel Upload) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -26,7 +26,7 @@ except ImportError:
     openpyxl = None
     print("⚠️ URGENTE: OpenPyXL NO está instalado. Agregalo a requirements.txt")
 
-# Directorio temporal para las subidas de archivos (obligatorio para FilePicker en web)
+# Directorio temporal para las subidas de archivos
 os.makedirs("uploads", exist_ok=True)
 
 # --- CONFIGURACIÓN UI ---
@@ -52,7 +52,6 @@ class UIHelper:
         color = THEME["danger"] if is_error else THEME["success"]
         page.snack_bar = ft.SnackBar(ft.Text(message), bgcolor=color)
         page.snack_bar.open = True
-        # FIX VITAL: Solo actualiza la página si la vista ya terminó de cargar
         if len(page.views) > 0:
             page.update()
 
@@ -662,10 +661,26 @@ def view_curso(page: ft.Page):
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
 
+    # --- FIX 12.3: LÓGICA DE SUBIDA DE ARCHIVOS EN LA NUBE ---
     def on_excel_picked(e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
-            UIHelper.show_snack(page, "🔄 Subiendo y procesando Excel...", is_error=False)
+            UIHelper.show_snack(page, "🔄 Preparando archivo...", is_error=False)
+            
             upload_url = page.get_upload_url(e.files[0].name, 60)
+            
+            # --- PARCHE RENDER ---
+            # Render no permite que el navegador busque archivos en "0.0.0.0". 
+            # Reemplazamos la url interna por la URL pública correcta.
+            render_url = os.environ.get("RENDER_EXTERNAL_URL")
+            if render_url:
+                from urllib.parse import urlparse
+                p = urlparse(upload_url)
+                upload_url = f"{render_url}{p.path}?{p.query}"
+            elif "0.0.0.0" in upload_url:
+                from urllib.parse import urlparse
+                p = urlparse(upload_url)
+                upload_url = f"{p.path}?{p.query}"
+            
             file_picker.upload([ft.FilePickerUploadFile(e.files[0].name, upload_url=upload_url)])
             if len(page.views) > 0: page.update()
 
@@ -673,25 +688,26 @@ def view_curso(page: ft.Page):
         if not e.error:
             filepath = os.path.join("uploads", e.file_name)
             try:
+                if not openpyxl:
+                    raise Exception("Falta instalar la librería 'openpyxl' en requirements.txt")
+                    
                 count = SchoolService.import_alumnos_excel(cid, filepath)
-                UIHelper.show_snack(page, f"✅ Se importaron {count} alumnos nuevos.")
+                UIHelper.show_snack(page, f"✅ ¡Se importaron {count} alumnos nuevos!")
                 load_alumnos()
                 if len(page.views) > 0: page.update()
             except Exception as ex:
                 UIHelper.show_snack(page, f"❌ Error leyendo Excel: {ex}", True)
             finally:
                 if os.path.exists(filepath):
-                    try:
-                        os.remove(filepath)
-                    except:
-                        pass
+                    try: os.remove(filepath)
+                    except: pass
         else:
-            UIHelper.show_snack(page, f"❌ Error de subida: {e.error}", True)
+            UIHelper.show_snack(page, f"❌ Falló la subida: {e.error}", True)
 
     page.overlay = [c for c in page.overlay if not isinstance(c, ft.FilePicker)]
     file_picker = ft.FilePicker(on_result=on_excel_picked, on_upload=on_excel_uploaded)
     page.overlay.append(file_picker)
-    # ELIMINADO EL PAGE.UPDATE() TÓXICO DE ACÁ
+    # -----------------------------------------------------------
 
     def download_excel(e):
         start = export_range["start"]
@@ -896,26 +912,18 @@ def view_curso(page: ft.Page):
             ], expand=True), padding=10)),
         ft.Tab(text="Asistencia", icon="check_circle", content=ft.Container(
             content=ft.Column([
-                ft.Row([date_tf, ft.IconButton("refresh", on_click=lambda e: (load_asist(), page.update()))]), 
+                ft.Row([date_tf, ft.IconButton("refresh", on_click=lambda e: (load_asist(), page.update() if len(page.views) > 0 else None))]), 
                 ft.Divider(), 
                 asist_col
             ], expand=True), padding=10)) 
     ], expand=True)
 
-    # Carga inicial silenciosa (sin page.update)
     load_alumnos()
     
     actions_header = [
         ft.ElevatedButton("Docs", color="white", bgcolor="orange", on_click=open_reqs_dlg),
         ft.ElevatedButton("Excel", color="white", bgcolor="green", on_click=open_export_dlg)
     ]
-    
-    fab_save = ft.FloatingActionButton(
-        icon="save", text="GUARDAR ASISTENCIA", 
-        bgcolor=THEME["primary"], 
-        on_click=guardar_asistencia_manual,
-        width=200 
-    )
 
     def on_tab_change(e):
         if e.control.selected_index == 1: 
@@ -932,7 +940,6 @@ def view_curso(page: ft.Page):
 
     tabs.on_change = on_tab_change
 
-    # Configuramos el FAB inicial según la pestaña activa (la 0)
     fab_inicial = ft.FloatingActionButton(icon="person_add", bgcolor=THEME["primary"], on_click=lambda _: (page.session.set("alumno_id_edit", None), page.go("/form_student")))
 
     return ft.View("/curso", [
@@ -1284,4 +1291,3 @@ if __name__ == "__main__":
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0", upload_dir="uploads")
     else:
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550, upload_dir="uploads")
-        
