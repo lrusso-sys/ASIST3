@@ -9,7 +9,7 @@ import io
 import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v12.3 (Fix Render Excel Upload) ---", flush=True)
+print("--- Oñepyrũ aplicación v12.4 (Fix Pantalla Blanca & FilePicker) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -26,7 +26,7 @@ except ImportError:
     openpyxl = None
     print("⚠️ URGENTE: OpenPyXL NO está instalado. Agregalo a requirements.txt")
 
-# Directorio temporal para las subidas de archivos
+# Directorio temporal para las subidas de archivos (obligatorio para FilePicker en web)
 os.makedirs("uploads", exist_ok=True)
 
 # --- CONFIGURACIÓN UI ---
@@ -53,7 +53,10 @@ class UIHelper:
         page.snack_bar = ft.SnackBar(ft.Text(message), bgcolor=color)
         page.snack_bar.open = True
         if len(page.views) > 0:
-            page.update()
+            try:
+                page.update()
+            except:
+                pass
 
     @staticmethod
     def create_card(content, padding=20, on_click=None, expand=False):
@@ -661,16 +664,14 @@ def view_curso(page: ft.Page):
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
 
-    # --- FIX 12.3: LÓGICA DE SUBIDA DE ARCHIVOS EN LA NUBE ---
+    # --- FIX 12.4: FILEPICKER INTEGRADO EN LA VISTA (SÚPER SEGURO) ---
     def on_excel_picked(e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
             UIHelper.show_snack(page, "🔄 Preparando archivo...", is_error=False)
             
             upload_url = page.get_upload_url(e.files[0].name, 60)
             
-            # --- PARCHE RENDER ---
-            # Render no permite que el navegador busque archivos en "0.0.0.0". 
-            # Reemplazamos la url interna por la URL pública correcta.
+            # Parche Render
             render_url = os.environ.get("RENDER_EXTERNAL_URL")
             if render_url:
                 from urllib.parse import urlparse
@@ -704,11 +705,10 @@ def view_curso(page: ft.Page):
         else:
             UIHelper.show_snack(page, f"❌ Falló la subida: {e.error}", True)
 
-    page.overlay = [c for c in page.overlay if not isinstance(c, ft.FilePicker)]
+    # El FilePicker se crea y luego se inserta ADENTRO de la vista, no más en el overlay
     file_picker = ft.FilePicker(on_result=on_excel_picked, on_upload=on_excel_uploaded)
-    page.overlay.append(file_picker)
-    # -----------------------------------------------------------
 
+    # --- EXPORTADOR ---
     def download_excel(e):
         start = export_range["start"]
         end = export_range["end"]
@@ -942,7 +942,9 @@ def view_curso(page: ft.Page):
 
     fab_inicial = ft.FloatingActionButton(icon="person_add", bgcolor=THEME["primary"], on_click=lambda _: (page.session.set("alumno_id_edit", None), page.go("/form_student")))
 
+    # FIX VITAL: El file_picker ahora está en la lista principal de controles de la vista, no en el overlay.
     return ft.View("/curso", [
+        file_picker, 
         UIHelper.create_header(cn, "Gestión", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard")), actions=actions_header),
         ft.Container(content=tabs, expand=True, bgcolor=THEME["bg"])
     ], floating_action_button=fab_inicial)
