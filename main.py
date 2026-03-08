@@ -9,7 +9,7 @@ import io
 import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v12.1 (Fix Importador Excel) ---", flush=True)
+print("--- Oñepyrũ aplicación v12.2 (Fix Pantalla Blanca & Excel) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -52,7 +52,9 @@ class UIHelper:
         color = THEME["danger"] if is_error else THEME["success"]
         page.snack_bar = ft.SnackBar(ft.Text(message), bgcolor=color)
         page.snack_bar.open = True
-        page.update()
+        # FIX VITAL: Solo actualiza la página si la vista ya terminó de cargar
+        if len(page.views) > 0:
+            page.update()
 
     @staticmethod
     def create_card(content, padding=20, on_click=None, expand=False):
@@ -309,7 +311,6 @@ class SchoolService:
     def delete_alumno(aid):
         return db.execute("DELETE FROM Alumnos WHERE id = %s", (aid,))
 
-    # --- FUNCIÓN PARA LEER EXCEL ---
     @staticmethod
     def import_alumnos_excel(curso_id, filepath):
         if not openpyxl: 
@@ -607,10 +608,10 @@ def view_dashboard(page: ft.Page):
                     page.close(dlg)
                 else:
                     p2.error_text = "No coinciden"
-                    p2.update()
+                    if len(page.views) > 0: page.update()
             else:
                 p1.error_text = "Completar campos"
-                p1.update()
+                if len(page.views) > 0: page.update()
 
         dlg = ft.AlertDialog(
             title=ft.Text("Cambiar Clave"),
@@ -638,7 +639,9 @@ def view_dashboard(page: ft.Page):
             def save_curso(e):
                 if tf_nombre.value:
                     if SchoolService.add_curso(tf_nombre.value, ciclo_actual['id']):
-                        page.close(dlg); load(); page.update(); UIHelper.show_snack(page, "Curso creado")
+                        page.close(dlg); load(); 
+                        if len(page.views) > 0: page.update()
+                        UIHelper.show_snack(page, "Curso creado")
                     else: UIHelper.show_snack(page, "Error al crear", True)
             
             dlg = ft.AlertDialog(title=ft.Text("Nuevo Curso"), content=tf_nombre, actions=[ft.TextButton("Guardar", on_click=save_curso)])
@@ -659,13 +662,12 @@ def view_curso(page: ft.Page):
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
 
-    # --- LÓGICA FILEPICKER CORREGIDA (En el overlay de la página) ---
     def on_excel_picked(e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
             UIHelper.show_snack(page, "🔄 Subiendo y procesando Excel...", is_error=False)
             upload_url = page.get_upload_url(e.files[0].name, 60)
             file_picker.upload([ft.FilePickerUploadFile(e.files[0].name, upload_url=upload_url)])
-            page.update()
+            if len(page.views) > 0: page.update()
 
     def on_excel_uploaded(e: ft.FilePickerUploadEvent):
         if not e.error:
@@ -674,6 +676,7 @@ def view_curso(page: ft.Page):
                 count = SchoolService.import_alumnos_excel(cid, filepath)
                 UIHelper.show_snack(page, f"✅ Se importaron {count} alumnos nuevos.")
                 load_alumnos()
+                if len(page.views) > 0: page.update()
             except Exception as ex:
                 UIHelper.show_snack(page, f"❌ Error leyendo Excel: {ex}", True)
             finally:
@@ -685,13 +688,11 @@ def view_curso(page: ft.Page):
         else:
             UIHelper.show_snack(page, f"❌ Error de subida: {e.error}", True)
 
-    # Limpiamos pickers anteriores para evitar duplicados al entrar y salir del curso
     page.overlay = [c for c in page.overlay if not isinstance(c, ft.FilePicker)]
     file_picker = ft.FilePicker(on_result=on_excel_picked, on_upload=on_excel_uploaded)
     page.overlay.append(file_picker)
-    page.update() # VITAL: Registramos el FilePicker en el frontend antes de usarlo
+    # ELIMINADO EL PAGE.UPDATE() TÓXICO DE ACÁ
 
-    # --- EXPORTADOR ---
     def download_excel(e):
         start = export_range["start"]
         end = export_range["end"]
@@ -738,7 +739,6 @@ def view_curso(page: ft.Page):
         )
         page.open(dlg)
 
-    # --- REQUISITOS ---
     def open_reqs_dlg(e):
         tf_req = ft.TextField(label="Nuevo Requisito", expand=True)
         list_col = ft.Column(scroll="auto")
@@ -752,16 +752,18 @@ def view_curso(page: ft.Page):
                     content=ft.Row([
                         ft.Icon("check_circle", color="green", size=16),
                         ft.Text(r['descripcion'], size=14, expand=True),
-                        ft.IconButton("delete", icon_color="red", icon_size=20, on_click=lambda e, rid=r['id']: (DocService.delete_requisito(rid), load_reqs_local(), page.update()))
+                        ft.IconButton("delete", icon_color="red", icon_size=20, on_click=lambda e, rid=r['id']: (DocService.delete_requisito(rid), load_reqs_local(), page.update() if len(page.views) > 0 else None))
                     ], alignment="spaceBetween"), bgcolor="grey100", padding=5, border_radius=5
                 ))
-            page.update()
+            if len(page.views) > 0: page.update()
 
         def add_req_local(e):
             if tf_req.value:
                 DocService.add_requisito(cid, tf_req.value)
                 tf_req.value = ""; load_reqs_local(); tf_req.focus()
-            else: tf_req.error_text = "Escribí algo"; page.update()
+            else: 
+                tf_req.error_text = "Escribí algo"
+                if len(page.views) > 0: page.update()
 
         tf_req.on_submit = add_req_local
         load_reqs_local()
@@ -778,12 +780,10 @@ def view_curso(page: ft.Page):
         )
         page.open(dlg_reqs)
 
-    # --- UI Principal ---
     lv = ft.Column(scroll="auto", expand=True) 
     def load_alumnos():
         try:
             lv.controls.clear()
-
             for a in SchoolService.get_alumnos(cid):
                 def det(e, aid=a['id']): page.session.set("alumno_id", aid); page.go("/student_detail")
                 def edt(e, aid=a['id']): page.session.set("alumno_id_edit", aid); page.go("/form_student")
@@ -802,15 +802,13 @@ def view_curso(page: ft.Page):
                 ), padding=0))
             
             lv.controls.append(ft.Container(height=80))
-            page.update()
         except Exception as e:
             lv.controls.append(ft.Text(f"Error cargando lista: {e}", color="red"))
-            page.update()
 
     date_tf = ft.TextField(label="Fecha", value=date.today().isoformat(), width=150, height=40, text_size=14)
     asist_col = ft.Column(scroll="auto", expand=True) 
     
-    def load_asist(e=None):
+    def load_asist():
         try:
             asist_col.controls.clear()
             try:
@@ -825,7 +823,6 @@ def view_curso(page: ft.Page):
             except: dia_sem = -1
 
             status_map = AttendanceService.get_day_status(cid, date_tf.value)
-            
             opciones_asistencia = ["P", "TM", "TT", "MFM", "MFT", "A", "J", "S", "N"]
             
             for a in SchoolService.get_alumnos(cid):
@@ -853,10 +850,8 @@ def view_curso(page: ft.Page):
                 asist_col.controls.append(ft.Container(content=ft.Row([ft.Text(a['nombre'] or "?", expand=True, weight="w500"), dd]), padding=5, border=ft.border.only(bottom=ft.border.BorderSide(1, "grey200"))))
             
             asist_col.controls.append(ft.Container(height=100))
-            page.update()
         except Exception as e:
             asist_col.controls.append(ft.Text(f"Error carga asistencia: {e}", color="red"))
-            page.update()
     
     def guardar_asistencia_manual(e):
         try:
@@ -887,7 +882,7 @@ def view_curso(page: ft.Page):
         except Exception as ex:
             UIHelper.show_snack(page, f"Error al guardar: {ex}", True)
 
-    date_tf.on_change = load_asist
+    date_tf.on_change = lambda e: (load_asist(), page.update() if len(page.views) > 0 else None)
 
     tabs = ft.Tabs(selected_index=0, tabs=[
         ft.Tab(text="Alumnos", icon="people", content=ft.Container(
@@ -901,12 +896,13 @@ def view_curso(page: ft.Page):
             ], expand=True), padding=10)),
         ft.Tab(text="Asistencia", icon="check_circle", content=ft.Container(
             content=ft.Column([
-                ft.Row([date_tf, ft.IconButton("refresh", on_click=load_asist)]), 
+                ft.Row([date_tf, ft.IconButton("refresh", on_click=lambda e: (load_asist(), page.update()))]), 
                 ft.Divider(), 
                 asist_col
             ], expand=True), padding=10)) 
-    ], expand=True, on_change=lambda e: (load_alumnos() if e.control.selected_index==0 else load_asist()))
+    ], expand=True)
 
+    # Carga inicial silenciosa (sin page.update)
     load_alumnos()
     
     actions_header = [
@@ -919,27 +915,30 @@ def view_curso(page: ft.Page):
         bgcolor=THEME["primary"], 
         on_click=guardar_asistencia_manual,
         width=200 
-    ) if tabs.selected_index == 1 else ft.FloatingActionButton(icon="person_add", bgcolor=THEME["primary"], on_click=lambda _: (page.session.set("alumno_id_edit", None), page.go("/form_student")))
+    )
 
     def on_tab_change(e):
         if e.control.selected_index == 1: 
             page.views[-1].floating_action_button = ft.FloatingActionButton(
                 icon="save", text="GUARDAR ASISTENCIA", bgcolor="green", on_click=guardar_asistencia_manual, width=220
             )
+            load_asist()
         else:
             page.views[-1].floating_action_button = ft.FloatingActionButton(
                 icon="person_add", bgcolor=THEME["primary"], on_click=lambda _: (page.session.set("alumno_id_edit", None), page.go("/form_student"))
             )
-        if e.control.selected_index == 1: load_asist()
-        else: load_alumnos()
-        page.update()
+            load_alumnos()
+        if len(page.views) > 0: page.update()
 
     tabs.on_change = on_tab_change
+
+    # Configuramos el FAB inicial según la pestaña activa (la 0)
+    fab_inicial = ft.FloatingActionButton(icon="person_add", bgcolor=THEME["primary"], on_click=lambda _: (page.session.set("alumno_id_edit", None), page.go("/form_student")))
 
     return ft.View("/curso", [
         UIHelper.create_header(cn, "Gestión", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard")), actions=actions_header),
         ft.Container(content=tabs, expand=True, bgcolor=THEME["bg"])
-    ], floating_action_button=fab_save)
+    ], floating_action_button=fab_inicial)
 
 def view_form_student(page: ft.Page):
     cid = page.session.get("curso_id"); aid = page.session.get("alumno_id_edit"); is_edit = aid is not None
@@ -948,7 +947,7 @@ def view_form_student(page: ft.Page):
     sw_tpp = ft.Switch(label="Activar Trayectoria (TPP)", value=False)
     checks = [ft.Checkbox(label=d, value=True, data=str(i)) for i, d in enumerate(["Lun","Mar","Mié","Jue","Vie"])]
     cont_days = ft.Column([ft.Text("Días Asistencia:")] + checks, visible=False)
-    sw_tpp.on_change = lambda e: (setattr(cont_days, 'visible', sw_tpp.value), page.update())
+    sw_tpp.on_change = lambda e: (setattr(cont_days, 'visible', sw_tpp.value), page.update() if len(page.views) > 0 else None)
 
     if is_edit:
         d = SchoolService.get_alumno(aid)
@@ -1131,15 +1130,15 @@ def view_feriados(page: ft.Page):
                 leading=ft.Icon("calendar_today", color="red"),
                 title=ft.Text(f['fecha']),
                 subtitle=ft.Text(f['descripcion']),
-                trailing=ft.IconButton("delete", icon_color="red", on_click=lambda e, fid=f['id']: (HolidayService.delete_feriado(fid), load(), page.update()))
+                trailing=ft.IconButton("delete", icon_color="red", on_click=lambda e, fid=f['id']: (HolidayService.delete_feriado(fid), load(), page.update() if len(page.views) > 0 else None))
             ), padding=5))
-        page.update()
     
     def add(e):
         if tf_fecha.value and tf_desc.value:
             HolidayService.add_feriado(tf_fecha.value, tf_desc.value)
             tf_fecha.value = ""; tf_desc.value = ""
             load()
+            if len(page.views) > 0: page.update()
         else:
             UIHelper.show_snack(page, "Completar ambos campos", True)
             
@@ -1167,9 +1166,9 @@ def view_ciclos(page: ft.Page):
             if is_active:
                 act_btn = ft.Container(content=ft.Text("ACTIVO", color="white", size=10, weight="bold"), bgcolor="green", padding=5, border_radius=5)
             else:
-                act_btn = ft.ElevatedButton("Activar", on_click=lambda e, cid=c['id']: (SchoolService.activar_ciclo(cid), load(), page.update()))
+                act_btn = ft.ElevatedButton("Activar", on_click=lambda e, cid=c['id']: (SchoolService.activar_ciclo(cid), load(), page.update() if len(page.views) > 0 else None))
             
-            del_btn = ft.IconButton("delete", icon_color="red", on_click=lambda e, cid=c['id']: (SchoolService.delete_ciclo(cid), load(), page.update()))
+            del_btn = ft.IconButton("delete", icon_color="red", on_click=lambda e, cid=c['id']: (SchoolService.delete_ciclo(cid), load(), page.update() if len(page.views) > 0 else None))
             
             col.controls.append(UIHelper.create_card(ft.ListTile(
                 leading=ft.Icon("check_circle" if is_active else "circle_outlined", color="green" if is_active else "grey"),
@@ -1179,8 +1178,12 @@ def view_ciclos(page: ft.Page):
     
     def add(e):
         if tf.value:
-            if SchoolService.add_ciclo(tf.value): tf.value=""; load(); page.update()
-            else: UIHelper.show_snack(page, "Error: ¿Ya existe?", True)
+            if SchoolService.add_ciclo(tf.value): 
+                tf.value=""
+                load()
+                if len(page.views) > 0: page.update()
+            else: 
+                UIHelper.show_snack(page, "Error: ¿Ya existe?", True)
             
     load()
     return ft.View("/ciclos", [
@@ -1213,11 +1216,16 @@ def view_users(page: ft.Page):
             if us['role'] != 'admin':
                 actions.append(ft.IconButton("assignment_ind", icon_color="blue", tooltip="Asignar Cursos", on_click=lambda e, uid=us['id'], un=us['username']: open_assign_dlg(uid, un)))
             if us['username'] != page.session.get("user")['username']:
-                actions.append(ft.IconButton("delete", icon_color="red", tooltip="Eliminar", on_click=lambda e, uid=us['id']: (UserService.delete_user(uid), load(), page.update())))
+                actions.append(ft.IconButton("delete", icon_color="red", tooltip="Eliminar", on_click=lambda e, uid=us['id']: (UserService.delete_user(uid), load(), page.update() if len(page.views) > 0 else None)))
             col.controls.append(UIHelper.create_card(ft.ListTile(leading=ft.Icon("person"), title=ft.Text(us['username']), subtitle=ft.Text(us['role']), trailing=ft.Row(actions, tight=True)), padding=5))
 
     def add(e):
-        if u.value and p.value: UserService.add_user(u.value, p.value, r.value); u.value = ""; p.value = ""; load(); page.update()
+        if u.value and p.value: 
+            UserService.add_user(u.value, p.value, r.value)
+            u.value = ""
+            p.value = ""
+            load()
+            if len(page.views) > 0: page.update()
 
     load()
     return ft.View("/users", [
@@ -1276,3 +1284,4 @@ if __name__ == "__main__":
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=int(port_env), host="0.0.0.0", upload_dir="uploads")
     else:
         ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550, upload_dir="uploads")
+        
