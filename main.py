@@ -9,7 +9,7 @@ import io
 import base64
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v12.0 (Importar Excel Estabilizado) ---", flush=True)
+print("--- Oñepyrũ aplicación v12.1 (Fix Importador Excel) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -319,9 +319,8 @@ class SchoolService:
         ws = wb.active
         count = 0
         
-        # Leemos desde la fila 2 (saltando títulos)
         for row in ws.iter_rows(min_row=2, values_only=True):
-            if row[0]: # Solo si hay un nombre en la columna A
+            if row[0]: 
                 data = {
                     'curso_id': curso_id,
                     'nombre': str(row[0]).strip(),
@@ -660,12 +659,13 @@ def view_curso(page: ft.Page):
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
 
-    # --- LÓGICA FILEPICKER SEGURA (Evita trabar la vista) ---
+    # --- LÓGICA FILEPICKER CORREGIDA (En el overlay de la página) ---
     def on_excel_picked(e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
+            UIHelper.show_snack(page, "🔄 Subiendo y procesando Excel...", is_error=False)
             upload_url = page.get_upload_url(e.files[0].name, 60)
             file_picker.upload([ft.FilePickerUploadFile(e.files[0].name, upload_url=upload_url)])
-            UIHelper.show_snack(page, "🔄 Subiendo y procesando Excel...")
+            page.update()
 
     def on_excel_uploaded(e: ft.FilePickerUploadEvent):
         if not e.error:
@@ -678,12 +678,18 @@ def view_curso(page: ft.Page):
                 UIHelper.show_snack(page, f"❌ Error leyendo Excel: {ex}", True)
             finally:
                 if os.path.exists(filepath):
-                    os.remove(filepath)
+                    try:
+                        os.remove(filepath)
+                    except:
+                        pass
         else:
             UIHelper.show_snack(page, f"❌ Error de subida: {e.error}", True)
 
-    # Se inicializa el FilePicker y se mete DENTRO de la vista (no en el overlay central)
+    # Limpiamos pickers anteriores para evitar duplicados al entrar y salir del curso
+    page.overlay = [c for c in page.overlay if not isinstance(c, ft.FilePicker)]
     file_picker = ft.FilePicker(on_result=on_excel_picked, on_upload=on_excel_uploaded)
+    page.overlay.append(file_picker)
+    page.update() # VITAL: Registramos el FilePicker en el frontend antes de usarlo
 
     # --- EXPORTADOR ---
     def download_excel(e):
@@ -777,8 +783,6 @@ def view_curso(page: ft.Page):
     def load_alumnos():
         try:
             lv.controls.clear()
-            # El file_picker es invisible, pero tiene que estar en la columna para existir
-            lv.controls.append(file_picker) 
 
             for a in SchoolService.get_alumnos(cid):
                 def det(e, aid=a['id']): page.session.set("alumno_id", aid); page.go("/student_detail")
@@ -888,7 +892,6 @@ def view_curso(page: ft.Page):
     tabs = ft.Tabs(selected_index=0, tabs=[
         ft.Tab(text="Alumnos", icon="people", content=ft.Container(
             content=ft.Column([
-                # BOTÓN NUEVO: IMPORTAR EXCEL
                 ft.Row([
                     ft.Text("Lista del Curso", weight="bold", size=16, expand=True), 
                     ft.ElevatedButton("Importar Excel", icon="upload_file", bgcolor="blue", color="white", on_click=lambda _: file_picker.pick_files(allowed_extensions=["xlsx"]))
