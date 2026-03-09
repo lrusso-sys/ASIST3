@@ -11,7 +11,7 @@ import time
 from urllib.parse import urlparse
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v12.8 (Fix Definitivo Excel + Navigation) ---", flush=True)
+print("--- Oñepyrũ aplicación v13.0 (Importador Infalible Copiar/Pegar) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -28,7 +28,6 @@ except ImportError:
     openpyxl = None
     print("⚠️ URGENTE: OpenPyXL NO está instalado. Agregalo a requirements.txt")
 
-# Directorio temporal para las subidas de archivos (obligatorio para FilePicker en web)
 os.makedirs("uploads", exist_ok=True)
 
 # --- CONFIGURACIÓN UI ---
@@ -319,11 +318,9 @@ class SchoolService:
     def import_alumnos_excel(curso_id, filepath):
         if not openpyxl: 
             raise Exception("La librería openpyxl no está instalada.")
-        
         wb = openpyxl.load_workbook(filepath)
         ws = wb.active
         count = 0
-        
         for row in ws.iter_rows(min_row=2, values_only=True):
             if row[0]: 
                 data = {
@@ -338,7 +335,34 @@ class SchoolService:
                 }
                 if SchoolService.add_alumno(data):
                     count += 1
+        return count
+
+    # --- NUEVO HACK: IMPORTAR TEXTO PEGADO DE EXCEL ---
+    @staticmethod
+    def import_alumnos_texto(curso_id, texto_pegado):
+        count = 0
+        lineas = texto_pegado.strip().split('\n')
+        for i, linea in enumerate(lineas):
+            # El Excel al copiar separa las columnas con tabulaciones (\t)
+            columnas = linea.split('\t')
+            if len(columnas) >= 1 and columnas[0].strip() != "":
+                
+                # Ignoramos si por error copiaron la fila de títulos
+                if i == 0 and columnas[0].strip().lower() in ["nombre", "alumno", "nombre y apellido"]:
+                    continue
                     
+                data = {
+                    'curso_id': curso_id,
+                    'nombre': str(columnas[0]).strip(),
+                    'dni': str(columnas[1]).strip() if len(columnas) > 1 else "",
+                    'tn': str(columnas[2]).strip() if len(columnas) > 2 else "",
+                    'tt': str(columnas[3]).strip() if len(columnas) > 3 else "",
+                    'obs': str(columnas[4]).strip() if len(columnas) > 4 else "Pegado desde Excel",
+                    'tpp': 0,
+                    'tpp_dias': ""
+                }
+                if SchoolService.add_alumno(data):
+                    count += 1
         return count
 
 class DocService:
@@ -540,7 +564,7 @@ def view_login(page: ft.Page):
         user = UserService.login(user_tf.value, pass_tf.value)
         if user:
             page.session.set("user", user)
-            page.go("/dashboard") # FIX NAVEGACIÓN
+            page.go("/dashboard") 
         else:
             UIHelper.show_snack(page, "Credenciales incorrectas", True)
 
@@ -586,7 +610,7 @@ def view_dashboard(page: ft.Page):
                 def go(e, cid=c['id'], cn=c['nombre']):
                     page.session.set("curso_id", cid)
                     page.session.set("curso_nombre", cn)
-                    page.go("/curso") # FIX NAVEGACIÓN
+                    page.go("/curso") 
                 
                 card = UIHelper.create_card(
                     ft.Row([
@@ -667,18 +691,14 @@ def view_curso(page: ft.Page):
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
 
-    # --- FIX 12.8: RUTAS RELATIVAS + FILEPICKER GLOBAL ---
+    # --- LÓGICA DEL ARCHIVO EXCEL (Mantenida por las dudas) ---
     def on_excel_picked(e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
             UIHelper.show_snack(page, "🔄 Preparando para la nube...", is_error=False)
-            
             raw_url = page.get_upload_url(e.files[0].name, 60)
-            
-            # EL HACK: Forzamos la ruta a ser relativa para que el navegador confíe ciegamente
             rel_url = raw_url
             if "/upload/" in raw_url:
                 rel_url = "/upload/" + raw_url.split("/upload/")[1]
-                
             page.excel_picker.upload([ft.FilePickerUploadFile(e.files[0].name, upload_url=rel_url)])
             if len(page.views) > 0: page.update()
 
@@ -686,26 +706,16 @@ def view_curso(page: ft.Page):
         if e.error:
             UIHelper.show_snack(page, f"❌ Error de red: {e.error}", True)
             return
-
-        # Esperamos a que la barra de carga llegue oficialmente al 100%
         if e.progress is None or e.progress >= 0.99:
-            UIHelper.show_snack(page, "✅ Archivo recibido. Procesando datos...", is_error=False)
-            
-            # Micro-pausa para darle tiempo al servidor a destrabar el archivo
             time.sleep(0.5)
             filepath = os.path.join("uploads", e.file_name)
-            
             if not os.path.exists(filepath):
-                UIHelper.show_snack(page, "❌ Error del servidor: El archivo desapareció.", True)
                 return
-                
             try:
-                if not openpyxl:
-                    raise Exception("Falta la librería 'openpyxl' en Render.")
-                    
                 count = SchoolService.import_alumnos_excel(cid, filepath)
                 UIHelper.show_snack(page, f"🎉 ¡Golazo! Se importaron {count} alumnos nuevos.")
                 load_alumnos()
+                page.close(dlg_import) # Cierra el popup al terminar
                 if len(page.views) > 0: page.update()
             except Exception as ex:
                 UIHelper.show_snack(page, f"❌ Error en el formato del Excel: {ex}", True)
@@ -714,9 +724,48 @@ def view_curso(page: ft.Page):
                     try: os.remove(filepath)
                     except: pass
 
-    # Conectamos las acciones al FilePicker Global que armamos en la base de la app
     page.excel_picker.on_result = on_excel_picked
     page.excel_picker.on_upload = on_excel_uploaded
+
+    # --- EL HACK INFALIBLE: PEGAR TEXTO DE EXCEL ---
+    txt_pegado = ft.TextField(
+        multiline=True, min_lines=5, max_lines=10, 
+        label="Pegar filas del Excel acá (Click derecho -> Pegar)",
+        text_size=12
+    )
+
+    def procesar_pegado(e):
+        if txt_pegado.value:
+            try:
+                count = SchoolService.import_alumnos_texto(cid, txt_pegado.value)
+                UIHelper.show_snack(page, f"✅ ¡Exito Total! Se procesaron {count} alumnos.")
+                txt_pegado.value = ""
+                load_alumnos()
+                page.close(dlg_import)
+                if len(page.views) > 0: page.update()
+            except Exception as ex:
+                UIHelper.show_snack(page, f"❌ Ocurrió un error leyendo el texto: {ex}", True)
+        else:
+            UIHelper.show_snack(page, "⚠️ Primero pegá el texto del Excel.", True)
+
+    # --- EL NUEVO MENÚ DE IMPORTACIÓN (2 OPCIONES) ---
+    dlg_import = ft.AlertDialog(
+        title=ft.Text("Importar Lista de Alumnos"),
+        content=ft.Container(
+            width=400,
+            content=ft.Column([
+                ft.Text("OPCIÓN 1: Subir archivo .xlsx (Puede fallar por bloqueos de red)", size=12, color="grey"),
+                ft.ElevatedButton("Buscar Archivo Excel", icon="search", on_click=lambda _: page.excel_picker.pick_files(allowed_extensions=["xlsx"])),
+                ft.Divider(height=20),
+                
+                ft.Text("OPCIÓN 2: Pegar Datos Directamente (INFALIBLE 🛡️)", weight="bold", size=14, color="blue900"),
+                ft.Text("1. Abrí tu Excel.\n2. Seleccioná y copiá todos los alumnos.\n3. Pegalos en esta caja:", size=12),
+                txt_pegado,
+                ft.ElevatedButton("Procesar Alumnos Pegados", icon="content_paste_go", bgcolor="green", color="white", on_click=procesar_pegado, width=float("inf"))
+            ], tight=True, scroll="auto")
+        ),
+        actions=[ft.TextButton("Cerrar", on_click=lambda e: page.close(dlg_import))]
+    )
 
     # --- EXPORTADOR ---
     def download_excel(e):
@@ -915,7 +964,8 @@ def view_curso(page: ft.Page):
             content=ft.Column([
                 ft.Row([
                     ft.Text("Lista del Curso", weight="bold", size=16, expand=True), 
-                    ft.ElevatedButton("Importar", icon="upload_file", bgcolor="blue", color="white", on_click=lambda _: page.excel_picker.pick_files(allowed_extensions=["xlsx"]))
+                    # El botón ahora abre el nuevo diálogo con las dos opciones
+                    ft.ElevatedButton("Importar", icon="upload_file", bgcolor="blue", color="white", on_click=lambda _: page.open(dlg_import))
                 ]),
                 ft.Divider(),
                 lv
@@ -1262,8 +1312,6 @@ def main(page: ft.Page):
     page.theme_mode = ft.ThemeMode.LIGHT
     page.padding = 0
 
-    # FIX VITAL: El FilePicker ahora es GLOBAL. Se crea UNA VEZ y vive para siempre en el fondo.
-    # Así no rompemos el motor de Flet al cambiar de pantallas.
     page.excel_picker = ft.FilePicker()
     page.overlay.append(page.excel_picker)
 
