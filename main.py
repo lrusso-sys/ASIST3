@@ -10,7 +10,7 @@ import base64
 import time
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v12.6 (Fix Subida Nube y Progreso) ---", flush=True)
+print("--- Oñepyrũ aplicación v12.7 (Fix Subida Nube Rutas Relativas) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -27,7 +27,7 @@ except ImportError:
     openpyxl = None
     print("⚠️ URGENTE: OpenPyXL NO está instalado. Agregalo a requirements.txt")
 
-# Directorio temporal para las subidas de archivos (obligatorio)
+# Directorio temporal para las subidas de archivos (obligatorio para FilePicker en web)
 os.makedirs("uploads", exist_ok=True)
 
 # --- CONFIGURACIÓN UI ---
@@ -665,65 +665,64 @@ def view_curso(page: ft.Page):
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
 
-    # --- FIX 12.6: LÓGICA DE SUBIDA BLINDADA ---
+    # --- HACK MAESTRO: CORTAR LA RUTA DE SUBIDA PARA ENGAÑAR AL NAVEGADOR ---
     def on_excel_picked(e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
-            UIHelper.show_snack(page, "🔄 Preparando archivo...", is_error=False)
+            UIHelper.show_snack(page, "🔄 Preparando...", is_error=False)
             
+            # Flet nos da una URL cruda que el navegador bloquea
             raw_url = page.get_upload_url(e.files[0].name, 60)
             
-            # EL TRUCO PARA LA NUBE: Si estamos en Render, obligamos a que la URL sea segura (HTTPS) 
-            # y que apunte a tu dominio real, para que el navegador no bloquee la subida.
-            render_url = os.environ.get("RENDER_EXTERNAL_URL")
-            if render_url:
-                from urllib.parse import urlparse
-                p = urlparse(raw_url)
-                # Juntamos el dominio de Render con la ruta de subida
-                upload_url = f"{render_url.rstrip('/')}{p.path}?{p.query}"
-                # Forzamos que sea seguro
-                upload_url = upload_url.replace("http://", "https://")
+            # La cortamos a la fuerza: Solo nos quedamos con "/upload/loquesea"
+            if "/upload/" in raw_url:
+                rel_url = "/upload/" + raw_url.split("/upload/")[1]
             else:
-                upload_url = raw_url.replace("0.0.0.0", "localhost")
-            
-            file_picker.upload([ft.FilePickerUploadFile(e.files[0].name, upload_url=upload_url)])
+                rel_url = raw_url # Por si acaso
+                
+            # Ahora tu navegador sabe que lo tiene que mandar a tu propio dominio seguro
+            file_picker.upload([ft.FilePickerUploadFile(e.files[0].name, upload_url=rel_url)])
             if len(page.views) > 0: page.update()
 
     def on_excel_uploaded(e: ft.FilePickerUploadEvent):
-        # Flet llama a este evento varias veces (cuando va por 10%, 50%, etc). 
-        # Solo lo leemos cuando llega al 100% (progress == 1.0)
-        
+        # Si saltó algún error en la red (onda "Mixed Content"), lo pescamos acá
         if e.error:
             UIHelper.show_snack(page, f"❌ Error de red: {e.error}", True)
             return
 
-        if e.progress == 1.0:
-            filepath = os.path.abspath(os.path.join("uploads", e.file_name))
+        # Flet llama a esto varias veces. Solo actuamos cuando llega al 100%
+        if e.progress is None or e.progress >= 0.99:
+            UIHelper.show_snack(page, "✅ Archivo en el servidor. Leyendo...", is_error=False)
             
-            # Le damos 1 segundo de respiro al sistema para que termine de armar el archivo físico
-            time.sleep(1)
+            # Le damos medio segundito al disco para que termine de armar el archivo físico
+            time.sleep(0.5)
+            
+            filepath = os.path.join("uploads", e.file_name)
             
             if not os.path.exists(filepath):
-                UIHelper.show_snack(page, "❌ El archivo no se guardó bien en el servidor.", True)
+                UIHelper.show_snack(page, "❌ Error interno: No se encontró el archivo.", True)
                 return
                 
             try:
                 if not openpyxl:
-                    raise Exception("Falta la librería 'openpyxl'.")
+                    raise Exception("Falta la librería 'openpyxl' en Render.")
                     
                 count = SchoolService.import_alumnos_excel(cid, filepath)
-                UIHelper.show_snack(page, f"✅ ¡Éxito! Se agregaron {count} alumnos.")
+                UIHelper.show_snack(page, f"🎉 ¡Golazo! Se importaron {count} alumnos.")
                 load_alumnos()
                 if len(page.views) > 0: page.update()
             except Exception as ex:
-                UIHelper.show_snack(page, f"❌ Error al leer el Excel: {ex}", True)
+                UIHelper.show_snack(page, f"❌ Error en el Excel: {ex}", True)
             finally:
                 if os.path.exists(filepath):
                     try: os.remove(filepath)
                     except: pass
 
+    # Se limpia el overlay por si quedó colgado de antes y se agrega
+    page.overlay = [c for c in page.overlay if not isinstance(c, ft.FilePicker)]
     file_picker = ft.FilePicker(on_result=on_excel_picked, on_upload=on_excel_uploaded)
-    # ----------------------------------------------------------------
+    page.overlay.append(file_picker)
 
+    # --- EXPORTADOR ---
     def download_excel(e):
         start = export_range["start"]
         end = export_range["end"]
@@ -958,7 +957,6 @@ def view_curso(page: ft.Page):
     fab_inicial = ft.FloatingActionButton(icon="person_add", bgcolor=THEME["primary"], on_click=lambda _: (page.session.set("alumno_id_edit", None), page.go("/form_student")))
 
     return ft.View("/curso", [
-        file_picker, 
         UIHelper.create_header(cn, "Gestión", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard")), actions=actions_header),
         ft.Container(content=tabs, expand=True, bgcolor=THEME["bg"])
     ], floating_action_button=fab_inicial)
