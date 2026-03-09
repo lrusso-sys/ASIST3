@@ -8,9 +8,10 @@ import threading
 import io
 import base64
 import time
+from urllib.parse import urlparse
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v12.7 (Fix Subida Nube Rutas Relativas) ---", flush=True)
+print("--- Oñepyrũ aplicación v12.8 (Fix Definitivo Excel + Navigation) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -539,8 +540,7 @@ def view_login(page: ft.Page):
         user = UserService.login(user_tf.value, pass_tf.value)
         if user:
             page.session.set("user", user)
-            page.route = "/dashboard"
-            page.update()
+            page.go("/dashboard") # FIX NAVEGACIÓN
         else:
             UIHelper.show_snack(page, "Credenciales incorrectas", True)
 
@@ -584,7 +584,9 @@ def view_dashboard(page: ft.Page):
 
             for c in cursos:
                 def go(e, cid=c['id'], cn=c['nombre']):
-                    page.session.set("curso_id", cid); page.session.set("curso_nombre", cn); page.route = "/curso"; page.update()
+                    page.session.set("curso_id", cid)
+                    page.session.set("curso_nombre", cn)
+                    page.go("/curso") # FIX NAVEGACIÓN
                 
                 card = UIHelper.create_card(
                     ft.Row([
@@ -665,41 +667,36 @@ def view_curso(page: ft.Page):
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
 
-    # --- HACK MAESTRO: CORTAR LA RUTA DE SUBIDA PARA ENGAÑAR AL NAVEGADOR ---
+    # --- FIX 12.8: RUTAS RELATIVAS + FILEPICKER GLOBAL ---
     def on_excel_picked(e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
-            UIHelper.show_snack(page, "🔄 Preparando...", is_error=False)
+            UIHelper.show_snack(page, "🔄 Preparando para la nube...", is_error=False)
             
-            # Flet nos da una URL cruda que el navegador bloquea
             raw_url = page.get_upload_url(e.files[0].name, 60)
             
-            # La cortamos a la fuerza: Solo nos quedamos con "/upload/loquesea"
+            # EL HACK: Forzamos la ruta a ser relativa para que el navegador confíe ciegamente
+            rel_url = raw_url
             if "/upload/" in raw_url:
                 rel_url = "/upload/" + raw_url.split("/upload/")[1]
-            else:
-                rel_url = raw_url # Por si acaso
                 
-            # Ahora tu navegador sabe que lo tiene que mandar a tu propio dominio seguro
-            file_picker.upload([ft.FilePickerUploadFile(e.files[0].name, upload_url=rel_url)])
+            page.excel_picker.upload([ft.FilePickerUploadFile(e.files[0].name, upload_url=rel_url)])
             if len(page.views) > 0: page.update()
 
     def on_excel_uploaded(e: ft.FilePickerUploadEvent):
-        # Si saltó algún error en la red (onda "Mixed Content"), lo pescamos acá
         if e.error:
             UIHelper.show_snack(page, f"❌ Error de red: {e.error}", True)
             return
 
-        # Flet llama a esto varias veces. Solo actuamos cuando llega al 100%
+        # Esperamos a que la barra de carga llegue oficialmente al 100%
         if e.progress is None or e.progress >= 0.99:
-            UIHelper.show_snack(page, "✅ Archivo en el servidor. Leyendo...", is_error=False)
+            UIHelper.show_snack(page, "✅ Archivo recibido. Procesando datos...", is_error=False)
             
-            # Le damos medio segundito al disco para que termine de armar el archivo físico
+            # Micro-pausa para darle tiempo al servidor a destrabar el archivo
             time.sleep(0.5)
-            
             filepath = os.path.join("uploads", e.file_name)
             
             if not os.path.exists(filepath):
-                UIHelper.show_snack(page, "❌ Error interno: No se encontró el archivo.", True)
+                UIHelper.show_snack(page, "❌ Error del servidor: El archivo desapareció.", True)
                 return
                 
             try:
@@ -707,20 +704,19 @@ def view_curso(page: ft.Page):
                     raise Exception("Falta la librería 'openpyxl' en Render.")
                     
                 count = SchoolService.import_alumnos_excel(cid, filepath)
-                UIHelper.show_snack(page, f"🎉 ¡Golazo! Se importaron {count} alumnos.")
+                UIHelper.show_snack(page, f"🎉 ¡Golazo! Se importaron {count} alumnos nuevos.")
                 load_alumnos()
                 if len(page.views) > 0: page.update()
             except Exception as ex:
-                UIHelper.show_snack(page, f"❌ Error en el Excel: {ex}", True)
+                UIHelper.show_snack(page, f"❌ Error en el formato del Excel: {ex}", True)
             finally:
                 if os.path.exists(filepath):
                     try: os.remove(filepath)
                     except: pass
 
-    # Se limpia el overlay por si quedó colgado de antes y se agrega
-    page.overlay = [c for c in page.overlay if not isinstance(c, ft.FilePicker)]
-    file_picker = ft.FilePicker(on_result=on_excel_picked, on_upload=on_excel_uploaded)
-    page.overlay.append(file_picker)
+    # Conectamos las acciones al FilePicker Global que armamos en la base de la app
+    page.excel_picker.on_result = on_excel_picked
+    page.excel_picker.on_upload = on_excel_uploaded
 
     # --- EXPORTADOR ---
     def download_excel(e):
@@ -919,7 +915,7 @@ def view_curso(page: ft.Page):
             content=ft.Column([
                 ft.Row([
                     ft.Text("Lista del Curso", weight="bold", size=16, expand=True), 
-                    ft.ElevatedButton("Importar", icon="upload_file", bgcolor="blue", color="white", on_click=lambda _: file_picker.pick_files(allowed_extensions=["xlsx"]))
+                    ft.ElevatedButton("Importar", icon="upload_file", bgcolor="blue", color="white", on_click=lambda _: page.excel_picker.pick_files(allowed_extensions=["xlsx"]))
                 ]),
                 ft.Divider(),
                 lv
@@ -1266,6 +1262,11 @@ def main(page: ft.Page):
     page.theme_mode = ft.ThemeMode.LIGHT
     page.padding = 0
 
+    # FIX VITAL: El FilePicker ahora es GLOBAL. Se crea UNA VEZ y vive para siempre en el fondo.
+    # Así no rompemos el motor de Flet al cambiar de pantallas.
+    page.excel_picker = ft.FilePicker()
+    page.overlay.append(page.excel_picker)
+
     routes = {
         "/": view_login,
         "/dashboard": view_dashboard,
@@ -1281,7 +1282,8 @@ def main(page: ft.Page):
     def route_change(route):
         page.views.clear()
         if page.route != "/" and not page.session.get("user"):
-            page.route = "/"
+            page.go("/")
+            return
         
         view_fn = routes.get(page.route)
         if view_fn:
