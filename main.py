@@ -7,10 +7,10 @@ import os
 import threading
 import io
 import base64
-from urllib.parse import urlparse
+import time
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v12.5 (Fix Subida Nube / Rutas Relativas) ---", flush=True)
+print("--- Oñepyrũ aplicación v12.6 (Fix Subida Nube y Progreso) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -19,6 +19,7 @@ except ImportError:
     xlsxwriter = None
     print("⚠️ URGENTE: XlsxWriter NO está instalado.")
 
+# NUEVA DEPENDENCIA: openpyxl para leer excels
 try:
     import openpyxl
     print("✅ Librería OpenPyXL detectada.")
@@ -26,7 +27,7 @@ except ImportError:
     openpyxl = None
     print("⚠️ URGENTE: OpenPyXL NO está instalado. Agregalo a requirements.txt")
 
-# Directorio temporal para las subidas de archivos (obligatorio para FilePicker en web)
+# Directorio temporal para las subidas de archivos (obligatorio)
 os.makedirs("uploads", exist_ok=True)
 
 # --- CONFIGURACIÓN UI ---
@@ -664,30 +665,45 @@ def view_curso(page: ft.Page):
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
 
-    # --- FIX 12.5: EL TRUCO DEL NAVEGADOR (URL RELATIVA) ---
+    # --- FIX 12.6: LÓGICA DE SUBIDA BLINDADA ---
     def on_excel_picked(e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
-            UIHelper.show_snack(page, "🔄 Preparando archivo para la nube...", is_error=False)
+            UIHelper.show_snack(page, "🔄 Preparando archivo...", is_error=False)
             
             raw_url = page.get_upload_url(e.files[0].name, 60)
             
-            # Magia pura: Cortamos la URL para que quede relativa (ej: /upload/xyz)
-            # Así el navegador no se confunde con la IP interna de Render.
-            p = urlparse(raw_url)
-            relative_url = p.path
-            if p.query:
-                relative_url += "?" + p.query
+            # EL TRUCO PARA LA NUBE: Si estamos en Render, obligamos a que la URL sea segura (HTTPS) 
+            # y que apunte a tu dominio real, para que el navegador no bloquee la subida.
+            render_url = os.environ.get("RENDER_EXTERNAL_URL")
+            if render_url:
+                from urllib.parse import urlparse
+                p = urlparse(raw_url)
+                # Juntamos el dominio de Render con la ruta de subida
+                upload_url = f"{render_url.rstrip('/')}{p.path}?{p.query}"
+                # Forzamos que sea seguro
+                upload_url = upload_url.replace("http://", "https://")
+            else:
+                upload_url = raw_url.replace("0.0.0.0", "localhost")
             
-            file_picker.upload([ft.FilePickerUploadFile(e.files[0].name, upload_url=relative_url)])
+            file_picker.upload([ft.FilePickerUploadFile(e.files[0].name, upload_url=upload_url)])
             if len(page.views) > 0: page.update()
 
     def on_excel_uploaded(e: ft.FilePickerUploadEvent):
-        if not e.error:
-            filepath = os.path.join("uploads", e.file_name)
+        # Flet llama a este evento varias veces (cuando va por 10%, 50%, etc). 
+        # Solo lo leemos cuando llega al 100% (progress == 1.0)
+        
+        if e.error:
+            UIHelper.show_snack(page, f"❌ Error de red: {e.error}", True)
+            return
+
+        if e.progress == 1.0:
+            filepath = os.path.abspath(os.path.join("uploads", e.file_name))
             
-            # Verificación de seguridad
+            # Le damos 1 segundo de respiro al sistema para que termine de armar el archivo físico
+            time.sleep(1)
+            
             if not os.path.exists(filepath):
-                UIHelper.show_snack(page, "❌ Error de red: El archivo no llegó.", True)
+                UIHelper.show_snack(page, "❌ El archivo no se guardó bien en el servidor.", True)
                 return
                 
             try:
@@ -695,21 +711,19 @@ def view_curso(page: ft.Page):
                     raise Exception("Falta la librería 'openpyxl'.")
                     
                 count = SchoolService.import_alumnos_excel(cid, filepath)
-                UIHelper.show_snack(page, f"✅ ¡Exito! {count} alumnos importados.")
+                UIHelper.show_snack(page, f"✅ ¡Éxito! Se agregaron {count} alumnos.")
                 load_alumnos()
                 if len(page.views) > 0: page.update()
             except Exception as ex:
-                UIHelper.show_snack(page, f"❌ Archivo inválido: {ex}", True)
+                UIHelper.show_snack(page, f"❌ Error al leer el Excel: {ex}", True)
             finally:
                 if os.path.exists(filepath):
                     try: os.remove(filepath)
                     except: pass
-        else:
-            UIHelper.show_snack(page, f"❌ Falló subida: {e.error}", True)
 
     file_picker = ft.FilePicker(on_result=on_excel_picked, on_upload=on_excel_uploaded)
+    # ----------------------------------------------------------------
 
-    # --- EXPORTADOR ---
     def download_excel(e):
         start = export_range["start"]
         end = export_range["end"]
@@ -906,7 +920,7 @@ def view_curso(page: ft.Page):
             content=ft.Column([
                 ft.Row([
                     ft.Text("Lista del Curso", weight="bold", size=16, expand=True), 
-                    ft.ElevatedButton("Importar Excel", icon="upload_file", bgcolor="blue", color="white", on_click=lambda _: file_picker.pick_files(allowed_extensions=["xlsx"]))
+                    ft.ElevatedButton("Importar", icon="upload_file", bgcolor="blue", color="white", on_click=lambda _: file_picker.pick_files(allowed_extensions=["xlsx"]))
                 ]),
                 ft.Divider(),
                 lv
@@ -944,7 +958,7 @@ def view_curso(page: ft.Page):
     fab_inicial = ft.FloatingActionButton(icon="person_add", bgcolor=THEME["primary"], on_click=lambda _: (page.session.set("alumno_id_edit", None), page.go("/form_student")))
 
     return ft.View("/curso", [
-        file_picker, # Acà esta el picker escondido de forma segura
+        file_picker, 
         UIHelper.create_header(cn, "Gestión", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard")), actions=actions_header),
         ft.Container(content=tabs, expand=True, bgcolor=THEME["bg"])
     ], floating_action_button=fab_inicial)
