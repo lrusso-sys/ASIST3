@@ -11,7 +11,7 @@ import time
 from urllib.parse import urlparse
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v13.0 (Importador Infalible Copiar/Pegar) ---", flush=True)
+print("--- Oñepyrũ aplicación v13.1 (Edición y Colores de Cursos) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -20,7 +20,6 @@ except ImportError:
     xlsxwriter = None
     print("⚠️ URGENTE: XlsxWriter NO está instalado.")
 
-# NUEVA DEPENDENCIA: openpyxl para leer excels
 try:
     import openpyxl
     print("✅ Librería OpenPyXL detectada.")
@@ -42,6 +41,8 @@ THEME = {
     "warning": "orange",
     "text": "bluegrey900"
 }
+
+PALETA_COLORES = ["indigo", "blue", "lightBlue", "cyan", "teal", "green", "lightGreen", "lime", "yellow", "amber", "orange", "deepOrange", "red", "pink", "purple", "deepPurple", "brown", "blueGrey", "grey"]
 
 # ==============================================================================
 # CAPA 1: UTILIDADES Y SEGURIDAD
@@ -157,6 +158,16 @@ class DatabaseManager:
                 if cur.fetchone()[0] == 0:
                     cur.execute("INSERT INTO Usuarios (username, password, role) VALUES (%s, %s, %s)", ("admin", Security.hash_password("admin"), "admin"))
             conn.commit()
+            
+            # --- MIGRACIÓN AUTOMÁTICA: Agregar columna color a Cursos si no existe ---
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("ALTER TABLE Cursos ADD COLUMN color TEXT DEFAULT 'indigo'")
+                conn.commit()
+                print("✅ Migración DB: Columna 'color' agregada a Cursos.")
+            except Exception as e:
+                conn.rollback() # Falla silenciosamente si la columna ya existe, es lo esperado.
+                
             print("✅ DB PostgreSQL Estructura OK.")
         except Exception as e:
             print(f"❌ Error Init DB: {e}")
@@ -298,7 +309,17 @@ class SchoolService:
         """, (aid,))
 
     @staticmethod
-    def add_curso(nombre, ciclo_id): return db.execute("INSERT INTO Cursos (nombre, ciclo_id) VALUES (%s, %s)", (nombre, ciclo_id))
+    def add_curso(nombre, ciclo_id): 
+        # Al crear, se pone color indigo por defecto en la DB
+        return db.execute("INSERT INTO Cursos (nombre, ciclo_id) VALUES (%s, %s)", (nombre, ciclo_id))
+        
+    @staticmethod
+    def update_curso(cid, nombre, color):
+        return db.execute("UPDATE Cursos SET nombre = %s, color = %s WHERE id = %s", (nombre, color, cid))
+        
+    @staticmethod
+    def delete_curso(cid):
+        return db.execute("DELETE FROM Cursos WHERE id = %s", (cid,))
     
     @staticmethod
     def add_alumno(data):
@@ -337,18 +358,14 @@ class SchoolService:
                     count += 1
         return count
 
-    # --- NUEVO HACK: IMPORTAR TEXTO PEGADO DE EXCEL ---
     @staticmethod
     def import_alumnos_texto(curso_id, texto_pegado):
         count = 0
         lineas = texto_pegado.strip().split('\n')
         for i, linea in enumerate(lineas):
-            # El Excel al copiar separa las columnas con tabulaciones (\t)
             columnas = linea.split('\t')
             if len(columnas) >= 1 and columnas[0].strip() != "":
-                
-                # Ignoramos si por error copiaron la fila de títulos
-                if i == 0 and columnas[0].strip().lower() in ["nombre", "alumno", "nombre y apellido"]:
+                if i == 0 and columnas[0].strip().lower() in ["nombre", "alumno", "nombre y apellido", "nombres"]:
                     continue
                     
                 data = {
@@ -612,10 +629,13 @@ def view_dashboard(page: ft.Page):
                     page.session.set("curso_nombre", cn)
                     page.go("/curso") 
                 
+                # --- NUEVO: Leer el color del curso desde la DB (si no hay, usa el primario) ---
+                c_color = c.get('color') or THEME["primary"]
+                
                 card = UIHelper.create_card(
                     ft.Row([
                         ft.Row([
-                            ft.Container(content=ft.Icon("class_", color="white"), bgcolor=THEME["primary"], border_radius=10, padding=12),
+                            ft.Container(content=ft.Icon("class_", color="white"), bgcolor=c_color, border_radius=10, padding=12),
                             ft.Text(c['nombre'], size=18, weight="bold", color=THEME["text"])
                         ]),
                         ft.IconButton("arrow_forward_ios", icon_color=THEME["primary"], on_click=go)
@@ -691,7 +711,6 @@ def view_curso(page: ft.Page):
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
 
-    # --- LÓGICA DEL ARCHIVO EXCEL (Mantenida por las dudas) ---
     def on_excel_picked(e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
             UIHelper.show_snack(page, "🔄 Preparando para la nube...", is_error=False)
@@ -715,7 +734,7 @@ def view_curso(page: ft.Page):
                 count = SchoolService.import_alumnos_excel(cid, filepath)
                 UIHelper.show_snack(page, f"🎉 ¡Golazo! Se importaron {count} alumnos nuevos.")
                 load_alumnos()
-                page.close(dlg_import) # Cierra el popup al terminar
+                page.close(dlg_import) 
                 if len(page.views) > 0: page.update()
             except Exception as ex:
                 UIHelper.show_snack(page, f"❌ Error en el formato del Excel: {ex}", True)
@@ -727,7 +746,6 @@ def view_curso(page: ft.Page):
     page.excel_picker.on_result = on_excel_picked
     page.excel_picker.on_upload = on_excel_uploaded
 
-    # --- EL HACK INFALIBLE: PEGAR TEXTO DE EXCEL ---
     txt_pegado = ft.TextField(
         multiline=True, min_lines=5, max_lines=10, 
         label="Pegar filas del Excel acá (Click derecho -> Pegar)",
@@ -748,13 +766,12 @@ def view_curso(page: ft.Page):
         else:
             UIHelper.show_snack(page, "⚠️ Primero pegá el texto del Excel.", True)
 
-    # --- EL NUEVO MENÚ DE IMPORTACIÓN (2 OPCIONES) ---
     dlg_import = ft.AlertDialog(
         title=ft.Text("Importar Lista de Alumnos"),
         content=ft.Container(
             width=400,
             content=ft.Column([
-                ft.Text("OPCIÓN 1: Subir archivo .xlsx (Puede fallar por bloqueos de red)", size=12, color="grey"),
+                ft.Text("OPCIÓN 1: Subir archivo .xlsx", size=12, color="grey"),
                 ft.ElevatedButton("Buscar Archivo Excel", icon="search", on_click=lambda _: page.excel_picker.pick_files(allowed_extensions=["xlsx"])),
                 ft.Divider(height=20),
                 
@@ -767,7 +784,6 @@ def view_curso(page: ft.Page):
         actions=[ft.TextButton("Cerrar", on_click=lambda e: page.close(dlg_import))]
     )
 
-    # --- EXPORTADOR ---
     def download_excel(e):
         start = export_range["start"]
         end = export_range["end"]
@@ -964,7 +980,6 @@ def view_curso(page: ft.Page):
             content=ft.Column([
                 ft.Row([
                     ft.Text("Lista del Curso", weight="bold", size=16, expand=True), 
-                    # El botón ahora abre el nuevo diálogo con las dos opciones
                     ft.ElevatedButton("Importar", icon="upload_file", bgcolor="blue", color="white", on_click=lambda _: page.open(dlg_import))
                 ]),
                 ft.Divider(),
@@ -1180,9 +1195,81 @@ def view_admin(page: ft.Page):
         UIHelper.create_header("Administración", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard"))),
         ft.Container(content=ft.Column([
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("calendar_month", color=THEME["primary"]), title=ft.Text("Ciclos Lectivos"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/ciclos"))),
+            # --- NUEVO: ACCESO A GESTIÓN DE CURSOS ---
+            UIHelper.create_card(ft.ListTile(leading=ft.Icon("class_", color=THEME["primary"]), title=ft.Text("Cursos (Editar/Colores)"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/admin_cursos"))),
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("people", color=THEME["primary"]), title=ft.Text("Usuarios"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/users"))),
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("event_busy", color=THEME["primary"]), title=ft.Text("Feriados"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/feriados"))),
         ]), padding=20, bgcolor=THEME["bg"])
+    ], scroll="auto")
+
+# --- NUEVA VISTA: GESTIÓN DE CURSOS (ADMIN) ---
+def view_admin_cursos(page: ft.Page):
+    ciclo_activo = SchoolService.get_ciclo_activo()
+    col = ft.Column(scroll="auto")
+    
+    if not ciclo_activo:
+        return ft.View("/admin_cursos", [
+            UIHelper.create_header("Gestión de Cursos", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/admin"))),
+            ft.Text("Primero tenés que activar un Ciclo Lectivo.", color="red", weight="bold")
+        ])
+
+    def load():
+        col.controls.clear()
+        cursos = SchoolService.get_cursos_all_active()
+        
+        for c in cursos:
+            color_actual = c.get('color') or THEME["primary"]
+            
+            def edit(e, curso_data=c):
+                tf_nombre = ft.TextField(label="Nombre del Curso", value=curso_data['nombre'])
+                
+                # Desplegable para elegir color
+                dd_color = ft.Dropdown(
+                    label="Color del Ícono", 
+                    value=curso_data.get('color') or THEME["primary"],
+                    options=[ft.dropdown.Option(col_name) for col_name in PALETA_COLORES]
+                )
+                
+                def save_curso(e):
+                    if tf_nombre.value:
+                        SchoolService.update_curso(curso_data['id'], tf_nombre.value, dd_color.value)
+                        page.close(dlg)
+                        UIHelper.show_snack(page, "✅ Curso actualizado.")
+                        load()
+                        page.update()
+
+                def delete_curso(e):
+                    SchoolService.delete_curso(curso_data['id'])
+                    page.close(dlg)
+                    UIHelper.show_snack(page, "🗑️ Curso eliminado.", True)
+                    load()
+                    page.update()
+
+                dlg = ft.AlertDialog(
+                    title=ft.Text(f"Editar: {curso_data['nombre']}"),
+                    content=ft.Column([
+                        tf_nombre, 
+                        dd_color,
+                        ft.Container(height=10),
+                        ft.ElevatedButton("Eliminar Curso Completo", icon="delete", color="white", bgcolor="red", width=float("inf"), on_click=delete_curso)
+                    ], tight=True),
+                    actions=[
+                        ft.TextButton("Cancelar", on_click=lambda e: page.close(dlg)),
+                        ft.ElevatedButton("Guardar", on_click=save_curso, bgcolor="green", color="white")
+                    ]
+                )
+                page.open(dlg)
+            
+            col.controls.append(UIHelper.create_card(ft.ListTile(
+                leading=ft.Icon("class_", color=color_actual),
+                title=ft.Text(c['nombre'], weight="bold"),
+                trailing=ft.IconButton("edit", on_click=edit)
+            ), padding=5))
+            
+    load()
+    return ft.View("/admin_cursos", [
+        UIHelper.create_header(f"Cursos: {ciclo_activo['nombre']}", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/admin"))),
+        ft.Container(content=col, expand=True, padding=20, bgcolor=THEME["bg"])
     ], scroll="auto")
 
 def view_feriados(page: ft.Page):
@@ -1322,6 +1409,7 @@ def main(page: ft.Page):
         "/student_detail": view_student_detail,
         "/form_student": view_form_student,
         "/admin": view_admin,
+        "/admin_cursos": view_admin_cursos, # NUEVA RUTA
         "/ciclos": view_ciclos,
         "/users": view_users,
         "/feriados": view_feriados
