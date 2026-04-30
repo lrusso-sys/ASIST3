@@ -2,7 +2,8 @@ import flet as ft
 import psycopg2
 import psycopg2.extras
 import hashlib
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+import calendar
 import os
 import threading
 import io
@@ -11,7 +12,7 @@ import time
 from urllib.parse import urlparse
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v13.1 (Edición y Colores de Cursos) ---", flush=True)
+print("--- Oñepyrũ aplicación v14.0 (Reportes Doc, Inscriptos e Historial Dinámico) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -20,6 +21,7 @@ except ImportError:
     xlsxwriter = None
     print("⚠️ URGENTE: XlsxWriter NO está instalado.")
 
+# NUEVA DEPENDENCIA: openpyxl para leer excels
 try:
     import openpyxl
     print("✅ Librería OpenPyXL detectada.")
@@ -43,6 +45,7 @@ THEME = {
 }
 
 PALETA_COLORES = ["indigo", "blue", "lightBlue", "cyan", "teal", "green", "lightGreen", "lime", "yellow", "amber", "orange", "deepOrange", "red", "pink", "purple", "deepPurple", "brown", "blueGrey", "grey"]
+MESES_ESP = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 
 # ==============================================================================
 # CAPA 1: UTILIDADES Y SEGURIDAD
@@ -55,10 +58,8 @@ class UIHelper:
         page.snack_bar = ft.SnackBar(ft.Text(message), bgcolor=color)
         page.snack_bar.open = True
         if len(page.views) > 0:
-            try:
-                page.update()
-            except:
-                pass
+            try: page.update()
+            except: pass
 
     @staticmethod
     def create_card(content, padding=20, on_click=None, expand=False):
@@ -159,14 +160,12 @@ class DatabaseManager:
                     cur.execute("INSERT INTO Usuarios (username, password, role) VALUES (%s, %s, %s)", ("admin", Security.hash_password("admin"), "admin"))
             conn.commit()
             
-            # --- MIGRACIÓN AUTOMÁTICA: Agregar columna color a Cursos si no existe ---
             try:
                 with conn.cursor() as cur:
                     cur.execute("ALTER TABLE Cursos ADD COLUMN color TEXT DEFAULT 'indigo'")
                 conn.commit()
-                print("✅ Migración DB: Columna 'color' agregada a Cursos.")
             except Exception as e:
-                conn.rollback() # Falla silenciosamente si la columna ya existe, es lo esperado.
+                conn.rollback() 
                 
             print("✅ DB PostgreSQL Estructura OK.")
         except Exception as e:
@@ -223,8 +222,7 @@ class UserService:
     @staticmethod
     def login(username, password):
         user = db.fetch_one("SELECT * FROM Usuarios WHERE username = %s", (username,))
-        if user and user['password'] == Security.hash_password(password):
-            return user
+        if user and user['password'] == Security.hash_password(password): return user
         return None
     @staticmethod
     def get_users(): return db.fetch_all("SELECT * FROM Usuarios ORDER BY username")
@@ -232,30 +230,24 @@ class UserService:
     def add_user(u, p, r): return db.execute("INSERT INTO Usuarios (username, password, role) VALUES (%s, %s, %s)", (u, Security.hash_password(p), r))
     @staticmethod
     def delete_user(uid): return db.execute("DELETE FROM Usuarios WHERE id = %s", (uid,))
-    
     @staticmethod
     def change_password(uid, new_password):
         hashed = Security.hash_password(new_password)
         return db.execute("UPDATE Usuarios SET password = %s WHERE id = %s", (hashed, uid))
-
     @staticmethod
     def get_user_cursos(uid):
         rows = db.fetch_all("SELECT curso_id FROM Usuario_Cursos WHERE usuario_id = %s", (uid,))
         return [r['curso_id'] for r in rows]
-
     @staticmethod
     def toggle_user_curso(uid, cid, assign):
-        if assign:
-            db.execute("INSERT INTO Usuario_Cursos (usuario_id, curso_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (uid, cid))
-        else:
-            db.execute("DELETE FROM Usuario_Cursos WHERE usuario_id = %s AND curso_id = %s", (uid, cid))
+        if assign: db.execute("INSERT INTO Usuario_Cursos (usuario_id, curso_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (uid, cid))
+        else: db.execute("DELETE FROM Usuario_Cursos WHERE usuario_id = %s AND curso_id = %s", (uid, cid))
 
 class SchoolService:
     @staticmethod
     def get_ciclos(): return db.fetch_all("SELECT * FROM Ciclos ORDER BY nombre DESC")
     @staticmethod
     def get_ciclo_activo(): return db.fetch_one("SELECT * FROM Ciclos WHERE activo = 1 LIMIT 1")
-    
     @staticmethod
     def add_ciclo(nombre):
         conn = db.get_connection()
@@ -266,7 +258,6 @@ class SchoolService:
             conn.commit(); return True
         except: conn.rollback(); return False
         finally: conn.close()
-
     @staticmethod
     def activar_ciclo(cid):
         conn = db.get_connection()
@@ -276,86 +267,55 @@ class SchoolService:
                 cur.execute("UPDATE Ciclos SET activo = 1 WHERE id = %s", (int(cid),))
             conn.commit()
         finally: conn.close()
-    
     @staticmethod
     def delete_ciclo(cid): return db.execute("DELETE FROM Ciclos WHERE id = %s", (cid,))
-
     @staticmethod
     def get_cursos_activos(user_id=None, role=None):
         ciclo = SchoolService.get_ciclo_activo()
         if not ciclo: return []
-        if role == 'admin':
-            return db.fetch_all("SELECT * FROM Cursos WHERE ciclo_id = %s ORDER BY nombre", (ciclo['id'],))
-        else:
-            return db.fetch_all("SELECT c.* FROM Cursos c JOIN Usuario_Cursos uc ON c.id = uc.curso_id WHERE c.ciclo_id = %s AND uc.usuario_id = %s ORDER BY c.nombre", (ciclo['id'], user_id))
-            
+        if role == 'admin': return db.fetch_all("SELECT * FROM Cursos WHERE ciclo_id = %s ORDER BY nombre", (ciclo['id'],))
+        else: return db.fetch_all("SELECT c.* FROM Cursos c JOIN Usuario_Cursos uc ON c.id = uc.curso_id WHERE c.ciclo_id = %s AND uc.usuario_id = %s ORDER BY c.nombre", (ciclo['id'], user_id))
     @staticmethod
     def get_cursos_all_active():
         ciclo = SchoolService.get_ciclo_activo()
         if not ciclo: return []
         return db.fetch_all("SELECT * FROM Cursos WHERE ciclo_id = %s ORDER BY nombre", (ciclo['id'],))
-
     @staticmethod
     def get_alumnos(curso_id): return db.fetch_all("SELECT * FROM Alumnos WHERE curso_id = %s ORDER BY nombre", (curso_id,))
-    
     @staticmethod
     def get_alumno(aid):
-        return db.fetch_one("""
-            SELECT a.*, c.nombre as curso_nombre, ci.nombre as ciclo_nombre, c.id as curso_id
-            FROM Alumnos a 
-            JOIN Cursos c ON a.curso_id = c.id 
-            JOIN Ciclos ci ON c.ciclo_id = ci.id
-            WHERE a.id = %s
-        """, (aid,))
-
+        return db.fetch_one("SELECT a.*, c.nombre as curso_nombre, ci.nombre as ciclo_nombre, c.id as curso_id FROM Alumnos a JOIN Cursos c ON a.curso_id = c.id JOIN Ciclos ci ON c.ciclo_id = ci.id WHERE a.id = %s", (aid,))
     @staticmethod
-    def add_curso(nombre, ciclo_id): 
-        # Al crear, se pone color indigo por defecto en la DB
-        return db.execute("INSERT INTO Cursos (nombre, ciclo_id) VALUES (%s, %s)", (nombre, ciclo_id))
-        
+    def add_curso(nombre, ciclo_id): return db.execute("INSERT INTO Cursos (nombre, ciclo_id) VALUES (%s, %s)", (nombre, ciclo_id))
     @staticmethod
-    def update_curso(cid, nombre, color):
-        return db.execute("UPDATE Cursos SET nombre = %s, color = %s WHERE id = %s", (nombre, color, cid))
-        
+    def update_curso(cid, nombre, color): return db.execute("UPDATE Cursos SET nombre = %s, color = %s WHERE id = %s", (nombre, color, cid))
     @staticmethod
-    def delete_curso(cid):
-        return db.execute("DELETE FROM Cursos WHERE id = %s", (cid,))
-    
+    def delete_curso(cid): return db.execute("DELETE FROM Cursos WHERE id = %s", (cid,))
     @staticmethod
     def add_alumno(data):
         return db.execute("INSERT INTO Alumnos (curso_id, nombre, dni, observaciones, tutor_nombre, tutor_telefono, tpp, tpp_dias) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", 
                           (data['curso_id'], data['nombre'], data['dni'], data['obs'], data['tn'], data['tt'], data['tpp'], data['tpp_dias']))
-    
     @staticmethod
     def update_alumno(aid, data):
         return db.execute("UPDATE Alumnos SET nombre=%s, dni=%s, observaciones=%s, tutor_nombre=%s, tutor_telefono=%s, tpp=%s, tpp_dias=%s WHERE id=%s", 
                           (data['nombre'], data['dni'], data['obs'], data['tn'], data['tt'], data['tpp'], data['tpp_dias'], aid))
-
     @staticmethod
-    def delete_alumno(aid):
-        return db.execute("DELETE FROM Alumnos WHERE id = %s", (aid,))
-
+    def delete_alumno(aid): return db.execute("DELETE FROM Alumnos WHERE id = %s", (aid,))
+    
     @staticmethod
     def import_alumnos_excel(curso_id, filepath):
-        if not openpyxl: 
-            raise Exception("La librería openpyxl no está instalada.")
+        if not openpyxl: raise Exception("La librería openpyxl no está instalada.")
         wb = openpyxl.load_workbook(filepath)
         ws = wb.active
         count = 0
         for row in ws.iter_rows(min_row=2, values_only=True):
             if row[0]: 
                 data = {
-                    'curso_id': curso_id,
-                    'nombre': str(row[0]).strip(),
-                    'dni': str(row[1]).strip() if len(row)>1 and row[1] is not None else "",
-                    'tn': str(row[2]).strip() if len(row)>2 and row[2] is not None else "",
-                    'tt': str(row[3]).strip() if len(row)>3 and row[3] is not None else "",
-                    'obs': str(row[4]).strip() if len(row)>4 and row[4] is not None else "Importado desde Excel",
-                    'tpp': 0,
-                    'tpp_dias': ""
+                    'curso_id': curso_id, 'nombre': str(row[0]).strip(), 'dni': str(row[1]).strip() if len(row)>1 and row[1] is not None else "",
+                    'tn': str(row[2]).strip() if len(row)>2 and row[2] is not None else "", 'tt': str(row[3]).strip() if len(row)>3 and row[3] is not None else "",
+                    'obs': str(row[4]).strip() if len(row)>4 and row[4] is not None else "Importado desde Excel", 'tpp': 0, 'tpp_dias': ""
                 }
-                if SchoolService.add_alumno(data):
-                    count += 1
+                if SchoolService.add_alumno(data): count += 1
         return count
 
     @staticmethod
@@ -365,63 +325,40 @@ class SchoolService:
         for i, linea in enumerate(lineas):
             columnas = linea.split('\t')
             if len(columnas) >= 1 and columnas[0].strip() != "":
-                if i == 0 and columnas[0].strip().lower() in ["nombre", "alumno", "nombre y apellido", "nombres"]:
-                    continue
-                    
+                if i == 0 and columnas[0].strip().lower() in ["nombre", "alumno", "nombre y apellido", "nombres"]: continue
                 data = {
-                    'curso_id': curso_id,
-                    'nombre': str(columnas[0]).strip(),
-                    'dni': str(columnas[1]).strip() if len(columnas) > 1 else "",
-                    'tn': str(columnas[2]).strip() if len(columnas) > 2 else "",
-                    'tt': str(columnas[3]).strip() if len(columnas) > 3 else "",
-                    'obs': str(columnas[4]).strip() if len(columnas) > 4 else "Pegado desde Excel",
-                    'tpp': 0,
-                    'tpp_dias': ""
+                    'curso_id': curso_id, 'nombre': str(columnas[0]).strip(), 'dni': str(columnas[1]).strip() if len(columnas) > 1 else "",
+                    'tn': str(columnas[2]).strip() if len(columnas) > 2 else "", 'tt': str(columnas[3]).strip() if len(columnas) > 3 else "",
+                    'obs': str(columnas[4]).strip() if len(columnas) > 4 else "Pegado desde Excel", 'tpp': 0, 'tpp_dias': ""
                 }
-                if SchoolService.add_alumno(data):
-                    count += 1
+                if SchoolService.add_alumno(data): count += 1
         return count
 
 class DocService:
     @staticmethod
-    def get_requisitos_curso(curso_id):
-        return db.fetch_all("SELECT * FROM Requisitos WHERE curso_id = %s ORDER BY descripcion", (curso_id,))
-    
+    def get_requisitos_curso(curso_id): return db.fetch_all("SELECT * FROM Requisitos WHERE curso_id = %s ORDER BY descripcion", (curso_id,))
     @staticmethod
-    def add_requisito(curso_id, desc):
-        return db.execute("INSERT INTO Requisitos (curso_id, descripcion) VALUES (%s, %s)", (curso_id, desc))
-    
+    def add_requisito(curso_id, desc): return db.execute("INSERT INTO Requisitos (curso_id, descripcion) VALUES (%s, %s)", (curso_id, desc))
     @staticmethod
-    def delete_requisito(rid):
-        return db.execute("DELETE FROM Requisitos WHERE id = %s", (rid,))
-    
+    def delete_requisito(rid): return db.execute("DELETE FROM Requisitos WHERE id = %s", (rid,))
     @staticmethod
     def get_estado_alumno(aid):
         rows = db.fetch_all("SELECT requisito_id, entregado FROM Documentacion_Alumno WHERE alumno_id = %s", (aid,))
         return {r['requisito_id']: r['entregado'] for r in rows}
-    
     @staticmethod
     def toggle_entrega(aid, rid, estado):
         val = 1 if estado else 0
-        q = "INSERT INTO Documentacion_Alumno (requisito_id, alumno_id, entregado) VALUES (%s, %s, %s) ON CONFLICT (requisito_id, alumno_id) DO UPDATE SET entregado=EXCLUDED.entregado"
-        db.execute(q, (rid, aid, val))
+        db.execute("INSERT INTO Documentacion_Alumno (requisito_id, alumno_id, entregado) VALUES (%s, %s, %s) ON CONFLICT (requisito_id, alumno_id) DO UPDATE SET entregado=EXCLUDED.entregado", (rid, aid, val))
 
 class HolidayService:
     @staticmethod
-    def get_feriados():
-        return db.fetch_all("SELECT * FROM Feriados ORDER BY fecha DESC")
-    
+    def get_feriados(): return db.fetch_all("SELECT * FROM Feriados ORDER BY fecha DESC")
     @staticmethod
-    def add_feriado(fecha, descripcion):
-        return db.execute("INSERT INTO Feriados (fecha, descripcion) VALUES (%s, %s) ON CONFLICT DO NOTHING", (fecha, descripcion))
-    
+    def add_feriado(fecha, descripcion): return db.execute("INSERT INTO Feriados (fecha, descripcion) VALUES (%s, %s) ON CONFLICT DO NOTHING", (fecha, descripcion))
     @staticmethod
-    def delete_feriado(fid):
-        return db.execute("DELETE FROM Feriados WHERE id = %s", (fid,))
-    
+    def delete_feriado(fid): return db.execute("DELETE FROM Feriados WHERE id = %s", (fid,))
     @staticmethod
-    def check_feriado(fecha):
-        return db.fetch_one("SELECT * FROM Feriados WHERE fecha = %s", (fecha,))
+    def check_feriado(fecha): return db.fetch_one("SELECT * FROM Feriados WHERE fecha = %s", (fecha,))
 
 class AttendanceService:
     @staticmethod
@@ -431,8 +368,7 @@ class AttendanceService:
 
     @staticmethod
     def mark(aid, fecha, status):
-        q = "INSERT INTO Asistencia (alumno_id, fecha, status) VALUES (%s, %s, %s) ON CONFLICT (alumno_id, fecha) DO UPDATE SET status = EXCLUDED.status"
-        return db.execute(q, (aid, fecha, status))
+        return db.execute("INSERT INTO Asistencia (alumno_id, fecha, status) VALUES (%s, %s, %s) ON CONFLICT (alumno_id, fecha) DO UPDATE SET status = EXCLUDED.status", (aid, fecha, status))
 
     @staticmethod
     def get_stats(aid):
@@ -443,42 +379,49 @@ class AttendanceService:
     def get_stats_range(aid, f_inicio, f_fin):
         rows = db.fetch_all("SELECT status FROM Asistencia WHERE alumno_id = %s AND fecha >= %s AND fecha <= %s", (aid, f_inicio, f_fin))
         return AttendanceService._calc_stats(rows)
+        
+    @staticmethod
+    def get_curso_history_range(curso_id, f_inicio, f_fin):
+        # Devuelve {alumno_id: {fecha: status}} y la lista de fechas
+        rows = db.fetch_all("""
+            SELECT a.alumno_id, a.fecha, a.status 
+            FROM Asistencia a
+            JOIN Alumnos al ON a.alumno_id = al.id
+            WHERE al.curso_id = %s AND a.fecha >= %s AND a.fecha <= %s
+            ORDER BY a.fecha ASC
+        """, (curso_id, f_inicio, f_fin))
+        
+        result = {}
+        fechas = set()
+        for r in rows:
+            aid = r['alumno_id']
+            f = r['fecha']
+            if aid not in result:
+                result[aid] = {}
+            result[aid][f] = r['status']
+            fechas.add(f)
+        return result, sorted(list(fechas))
     
     @staticmethod
     def _calc_stats(rows):
         c = {k: 0 for k in ['P','T','TM','TT','MFM','MFT','A','J','S','N']}
         for r in rows:
-            if r['status'] in c: 
-                c[r['status']] += 1
-            else:
-                c[r['status']] = 1
+            if r['status'] in c: c[r['status']] += 1
+            else: c[r['status']] = 1
                 
         faltas = c['A'] + c['S'] + (c['T'] * 0.25) + (c['TM'] * 0.25) + (c['TT'] * 0.25) + (c['MFM'] * 0.5) + (c['MFT'] * 0.5)
         total = sum(c[k] for k in ['P','T','TM','TT','MFM','MFT','A','J','S'])
         pct = (1 - (faltas / total)) * 100 if total > 0 else 100
         
         return {
-            'p': c['P'], 
-            'a': c['A'], 
-            't_old': c['T'], 
-            'tm': c['TM'],
-            'tt': c['TT'],
-            'mfm': c['MFM'],
-            'mft': c['MFT'],
-            'j': c['J'], 
-            's': c['S'],
-            'faltas': faltas, 
-            'pct': round(pct, 1), 
-            'total': total
+            'p': c['P'], 'a': c['A'], 't_old': c['T'], 'tm': c['TM'], 'tt': c['TT'], 'mfm': c['MFM'], 'mft': c['MFT'],
+            'j': c['J'], 's': c['S'], 'faltas': faltas, 'pct': round(pct, 1), 'total': total
         }
 
     @staticmethod
-    def get_history(aid):
-        return db.fetch_all("SELECT fecha, status FROM Asistencia WHERE alumno_id = %s ORDER BY fecha DESC", (aid,))
-
+    def get_history(aid): return db.fetch_all("SELECT fecha, status FROM Asistencia WHERE alumno_id = %s ORDER BY fecha DESC", (aid,))
     @staticmethod
-    def get_history_range(aid, f_inicio, f_fin):
-        return db.fetch_all("SELECT fecha, status FROM Asistencia WHERE alumno_id = %s AND fecha >= %s AND fecha <= %s ORDER BY fecha ASC", (aid, f_inicio, f_fin))
+    def get_history_range(aid, f_inicio, f_fin): return db.fetch_all("SELECT fecha, status FROM Asistencia WHERE alumno_id = %s AND fecha >= %s AND fecha <= %s ORDER BY fecha ASC", (aid, f_inicio, f_fin))
 
 class ReportService:
     @staticmethod
@@ -494,9 +437,14 @@ class ReportService:
             cell_fmt = workbook.add_format({'border': 1})
             red_fmt = workbook.add_format({'border': 1, 'color': 'red'})
 
-            ws.merge_range('A1:F1', f"Informe: {f_inicio} al {f_fin}", title_fmt)
+            # MOD 1: Traemos los requisitos del curso para agregarlos al excel
+            requisitos = DocService.get_requisitos_curso(curso_id)
+            req_headers = [r['descripcion'] for r in requisitos]
+
+            # Unimos los encabezados estándar con los de la documentación
+            headers = ["Nombre", "DNI", "Presentes", "Faltas Tot.", "% Asist.", "Situación"] + req_headers
             
-            headers = ["Nombre", "DNI", "Presentes", "Faltas Tot.", "% Asist.", "Situación"]
+            ws.merge_range(0, 0, 0, len(headers)-1, f"Informe: {f_inicio} al {f_fin}", title_fmt)
             ws.write_row(2, 0, headers, header_fmt)
             ws.set_column(0, 0, 30) 
             
@@ -513,10 +461,18 @@ class ReportService:
                 situacion = "Regular" if stats['pct'] >= 75 else "En Riesgo"
                 ws.write(i, 5, situacion, red_fmt if situacion == "En Riesgo" else cell_fmt)
                 
+                # MOD 1: Buscamos si el pibe entregó o no la documentación
+                estados_doc = DocService.get_estado_alumno(a['id'])
+                for col_idx, req in enumerate(requisitos):
+                    entregado = "Sí" if estados_doc.get(req['id']) == 1 else "No"
+                    ws.write(i, 6 + col_idx, entregado, cell_fmt)
+                
             workbook.close()
             output.seek(0)
             return output
-        except: return None
+        except Exception as e:
+            print("Error Excel:", e)
+            return None
 
     @staticmethod
     def generate_excel_alumno(alumno_id, f_inicio, f_fin):
@@ -629,7 +585,6 @@ def view_dashboard(page: ft.Page):
                     page.session.set("curso_nombre", cn)
                     page.go("/curso") 
                 
-                # --- NUEVO: Leer el color del curso desde la DB (si no hay, usa el primario) ---
                 c_color = c.get('color') or THEME["primary"]
                 
                 card = UIHelper.create_card(
@@ -814,7 +769,7 @@ def view_curso(page: ft.Page):
             download_excel(e)
 
         dlg = ft.AlertDialog(
-            title=ft.Text("Exportar Asistencia"),
+            title=ft.Text("Exportar Asistencia y Documentación"),
             content=ft.Container(
                 content=ft.Column([
                     ft.Text("Seleccione período:", size=12),
@@ -871,11 +826,19 @@ def view_curso(page: ft.Page):
         )
         page.open(dlg_reqs)
 
+    # --- MOD 2: Título dinámico de alumnos inscriptos ---
+    txt_titulo_alumnos = ft.Text("Lista del Curso", weight="bold", size=16, expand=True)
     lv = ft.Column(scroll="auto", expand=True) 
+
     def load_alumnos():
         try:
             lv.controls.clear()
-            for a in SchoolService.get_alumnos(cid):
+            alumnos_lista = SchoolService.get_alumnos(cid)
+            
+            # Actualizamos el título con la cantidad de inscriptos
+            txt_titulo_alumnos.value = f"Lista del Curso ({len(alumnos_lista)} inscriptos)"
+
+            for a in alumnos_lista:
                 def det(e, aid=a['id']): page.session.set("alumno_id", aid); page.go("/student_detail")
                 def edt(e, aid=a['id']): page.session.set("alumno_id_edit", aid); page.go("/form_student")
                 
@@ -975,11 +938,14 @@ def view_curso(page: ft.Page):
 
     date_tf.on_change = lambda e: (load_asist(), page.update() if len(page.views) > 0 else None)
 
+    # --- MOD 3: Botón para el Historial Dinámico ---
+    btn_historial = ft.ElevatedButton("Ver Historial Dinámico", icon="calendar_month", bgcolor="blue", color="white", on_click=lambda _: page.go("/historial_curso"))
+
     tabs = ft.Tabs(selected_index=0, tabs=[
         ft.Tab(text="Alumnos", icon="people", content=ft.Container(
             content=ft.Column([
                 ft.Row([
-                    ft.Text("Lista del Curso", weight="bold", size=16, expand=True), 
+                    txt_titulo_alumnos, 
                     ft.ElevatedButton("Importar", icon="upload_file", bgcolor="blue", color="white", on_click=lambda _: page.open(dlg_import))
                 ]),
                 ft.Divider(),
@@ -987,7 +953,7 @@ def view_curso(page: ft.Page):
             ], expand=True), padding=10)),
         ft.Tab(text="Asistencia", icon="check_circle", content=ft.Container(
             content=ft.Column([
-                ft.Row([date_tf, ft.IconButton("refresh", on_click=lambda e: (load_asist(), page.update() if len(page.views) > 0 else None))]), 
+                ft.Row([date_tf, ft.IconButton("refresh", on_click=lambda e: (load_asist(), page.update() if len(page.views) > 0 else None)), ft.Container(expand=True), btn_historial]), 
                 ft.Divider(), 
                 asist_col
             ], expand=True), padding=10)) 
@@ -1021,6 +987,101 @@ def view_curso(page: ft.Page):
         UIHelper.create_header(cn, "Gestión", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard")), actions=actions_header),
         ft.Container(content=tabs, expand=True, bgcolor=THEME["bg"])
     ], floating_action_button=fab_inicial)
+
+# --- NUEVA VISTA: HISTORIAL DINÁMICO DEL CURSO ---
+def view_historial_curso(page: ft.Page):
+    cid = page.session.get("curso_id")
+    cn = page.session.get("curso_nombre")
+    if not cid: return view_dashboard(page)
+    
+    # Inicializamos la fecha en el primer dia del mes actual
+    if not page.session.contains_key("historial_date"):
+        page.session.set("historial_date", date.today().replace(day=1).isoformat())
+    
+    current_date_str = page.session.get("historial_date")
+    current_date = date.fromisoformat(current_date_str)
+    
+    mes_str = f"{MESES_ESP[current_date.month - 1]} {current_date.year}"
+    txt_mes = ft.Text(mes_str, size=20, weight="bold")
+    tabla_container = ft.Container(expand=True)
+    
+    def load_data():
+        # Calculamos inicio y fin de mes
+        _, last_day = calendar.monthrange(current_date.year, current_date.month)
+        f_inicio = current_date.replace(day=1).isoformat()
+        f_fin = current_date.replace(day=last_day).isoformat()
+        
+        alumnos = SchoolService.get_alumnos(cid)
+        data_asist, fechas = AttendanceService.get_curso_history_range(cid, f_inicio, f_fin)
+        
+        if not fechas:
+            tabla_container.content = ft.Text("No hay registros de asistencia en este mes todavía.", italic=True, color="grey")
+        else:
+            # Armamos las columnas (Alumno + cada dia del mes que tenga registro)
+            columns = [ft.DataColumn(ft.Text("Alumno", weight="bold"))]
+            for f in fechas:
+                dia = f.split("-")[2] # Agarramos solo el "DD"
+                columns.append(ft.DataColumn(ft.Text(dia, weight="bold")))
+            
+            # Armamos las filas
+            rows = []
+            for a in alumnos:
+                aid = a['id']
+                cells = [ft.DataCell(ft.Text(a['nombre'], width=150))] # Nombre con ancho fijo para que no se achique
+                
+                for f in fechas:
+                    status = data_asist.get(aid, {}).get(f, "-")
+                    # Le metemos un poquito de onda con los colores
+                    color = "black"
+                    if status == "A": color = "red"
+                    elif status in ["TM", "TT", "MFM", "MFT", "T"]: color = "orange"
+                    elif status == "P": color = "green"
+                    elif status in ["J", "S"]: color = "blue"
+                    
+                    cells.append(ft.DataCell(ft.Text(status, color=color, weight="bold" if status != "-" else "normal")))
+                    
+                rows.append(ft.DataRow(cells=cells))
+            
+            # Lo metemos en un Row con scroll horizontal para que no se rompa la pantalla en los celus
+            tabla = ft.DataTable(columns=columns, rows=rows, heading_row_color=THEME["secondary"], column_spacing=20)
+            tabla_container.content = ft.Row([tabla], scroll="always", expand=True)
+        
+        txt_mes.value = f"{MESES_ESP[current_date.month - 1]} {current_date.year}"
+        if len(page.views) > 0: page.update()
+        
+    def prev_month(e):
+        nonlocal current_date
+        # Le restamos un dia al dia 1, caemos en el mes anterior, y lo seteamos al dia 1 de ese mes
+        prev = (current_date - timedelta(days=1)).replace(day=1)
+        current_date = prev
+        page.session.set("historial_date", current_date.isoformat())
+        load_data()
+        
+    def next_month(e):
+        nonlocal current_date
+        _, last_day = calendar.monthrange(current_date.year, current_date.month)
+        nxt = (current_date.replace(day=last_day) + timedelta(days=1)).replace(day=1)
+        current_date = nxt
+        page.session.set("historial_date", current_date.isoformat())
+        load_data()
+
+    load_data()
+    
+    header = UIHelper.create_header(f"Historial Dinámico", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso")))
+    
+    controles_mes = ft.Row([
+        ft.IconButton("chevron_left", on_click=prev_month, icon_color="blue", icon_size=30),
+        txt_mes,
+        ft.IconButton("chevron_right", on_click=next_month, icon_color="blue", icon_size=30)
+    ], alignment="center")
+    
+    return ft.View("/historial_curso", [
+        header,
+        ft.Container(content=ft.Column([
+            UIHelper.create_card(controles_mes, padding=10),
+            UIHelper.create_card(tabla_container, expand=True, padding=0)
+        ], expand=True), padding=10, bgcolor=THEME["bg"], expand=True)
+    ])
 
 def view_form_student(page: ft.Page):
     cid = page.session.get("curso_id"); aid = page.session.get("alumno_id_edit"); is_edit = aid is not None
@@ -1195,14 +1256,12 @@ def view_admin(page: ft.Page):
         UIHelper.create_header("Administración", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/dashboard"))),
         ft.Container(content=ft.Column([
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("calendar_month", color=THEME["primary"]), title=ft.Text("Ciclos Lectivos"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/ciclos"))),
-            # --- NUEVO: ACCESO A GESTIÓN DE CURSOS ---
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("class_", color=THEME["primary"]), title=ft.Text("Cursos (Editar/Colores)"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/admin_cursos"))),
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("people", color=THEME["primary"]), title=ft.Text("Usuarios"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/users"))),
             UIHelper.create_card(ft.ListTile(leading=ft.Icon("event_busy", color=THEME["primary"]), title=ft.Text("Feriados"), trailing=ft.Icon("chevron_right"), on_click=lambda _: page.go("/feriados"))),
         ]), padding=20, bgcolor=THEME["bg"])
     ], scroll="auto")
 
-# --- NUEVA VISTA: GESTIÓN DE CURSOS (ADMIN) ---
 def view_admin_cursos(page: ft.Page):
     ciclo_activo = SchoolService.get_ciclo_activo()
     col = ft.Column(scroll="auto")
@@ -1223,7 +1282,6 @@ def view_admin_cursos(page: ft.Page):
             def edit(e, curso_data=c):
                 tf_nombre = ft.TextField(label="Nombre del Curso", value=curso_data['nombre'])
                 
-                # Desplegable para elegir color
                 dd_color = ft.Dropdown(
                     label="Color del Ícono", 
                     value=curso_data.get('color') or THEME["primary"],
@@ -1406,10 +1464,11 @@ def main(page: ft.Page):
         "/": view_login,
         "/dashboard": view_dashboard,
         "/curso": view_curso,
+        "/historial_curso": view_historial_curso, # <--- RUTA NUEVA
         "/student_detail": view_student_detail,
         "/form_student": view_form_student,
         "/admin": view_admin,
-        "/admin_cursos": view_admin_cursos, # NUEVA RUTA
+        "/admin_cursos": view_admin_cursos, 
         "/ciclos": view_ciclos,
         "/users": view_users,
         "/feriados": view_feriados
