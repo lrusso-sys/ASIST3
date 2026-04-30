@@ -12,7 +12,7 @@ import time
 from urllib.parse import urlparse
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v14.0 (Reportes Doc, Inscriptos e Historial Dinámico) ---", flush=True)
+print("--- Oñepyrũ aplicación v14.1 (Historial Dinámico con Total de Faltas) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -21,7 +21,6 @@ except ImportError:
     xlsxwriter = None
     print("⚠️ URGENTE: XlsxWriter NO está instalado.")
 
-# NUEVA DEPENDENCIA: openpyxl para leer excels
 try:
     import openpyxl
     print("✅ Librería OpenPyXL detectada.")
@@ -382,7 +381,6 @@ class AttendanceService:
         
     @staticmethod
     def get_curso_history_range(curso_id, f_inicio, f_fin):
-        # Devuelve {alumno_id: {fecha: status}} y la lista de fechas
         rows = db.fetch_all("""
             SELECT a.alumno_id, a.fecha, a.status 
             FROM Asistencia a
@@ -437,11 +435,9 @@ class ReportService:
             cell_fmt = workbook.add_format({'border': 1})
             red_fmt = workbook.add_format({'border': 1, 'color': 'red'})
 
-            # MOD 1: Traemos los requisitos del curso para agregarlos al excel
             requisitos = DocService.get_requisitos_curso(curso_id)
             req_headers = [r['descripcion'] for r in requisitos]
 
-            # Unimos los encabezados estándar con los de la documentación
             headers = ["Nombre", "DNI", "Presentes", "Faltas Tot.", "% Asist.", "Situación"] + req_headers
             
             ws.merge_range(0, 0, 0, len(headers)-1, f"Informe: {f_inicio} al {f_fin}", title_fmt)
@@ -461,7 +457,6 @@ class ReportService:
                 situacion = "Regular" if stats['pct'] >= 75 else "En Riesgo"
                 ws.write(i, 5, situacion, red_fmt if situacion == "En Riesgo" else cell_fmt)
                 
-                # MOD 1: Buscamos si el pibe entregó o no la documentación
                 estados_doc = DocService.get_estado_alumno(a['id'])
                 for col_idx, req in enumerate(requisitos):
                     entregado = "Sí" if estados_doc.get(req['id']) == 1 else "No"
@@ -826,7 +821,6 @@ def view_curso(page: ft.Page):
         )
         page.open(dlg_reqs)
 
-    # --- MOD 2: Título dinámico de alumnos inscriptos ---
     txt_titulo_alumnos = ft.Text("Lista del Curso", weight="bold", size=16, expand=True)
     lv = ft.Column(scroll="auto", expand=True) 
 
@@ -835,7 +829,6 @@ def view_curso(page: ft.Page):
             lv.controls.clear()
             alumnos_lista = SchoolService.get_alumnos(cid)
             
-            # Actualizamos el título con la cantidad de inscriptos
             txt_titulo_alumnos.value = f"Lista del Curso ({len(alumnos_lista)} inscriptos)"
 
             for a in alumnos_lista:
@@ -938,7 +931,6 @@ def view_curso(page: ft.Page):
 
     date_tf.on_change = lambda e: (load_asist(), page.update() if len(page.views) > 0 else None)
 
-    # --- MOD 3: Botón para el Historial Dinámico ---
     btn_historial = ft.ElevatedButton("Ver Historial Dinámico", icon="calendar_month", bgcolor="blue", color="white", on_click=lambda _: page.go("/historial_curso"))
 
     tabs = ft.Tabs(selected_index=0, tabs=[
@@ -988,13 +980,11 @@ def view_curso(page: ft.Page):
         ft.Container(content=tabs, expand=True, bgcolor=THEME["bg"])
     ], floating_action_button=fab_inicial)
 
-# --- NUEVA VISTA: HISTORIAL DINÁMICO DEL CURSO ---
 def view_historial_curso(page: ft.Page):
     cid = page.session.get("curso_id")
     cn = page.session.get("curso_nombre")
     if not cid: return view_dashboard(page)
     
-    # Inicializamos la fecha en el primer dia del mes actual
     if not page.session.contains_key("historial_date"):
         page.session.set("historial_date", date.today().replace(day=1).isoformat())
     
@@ -1006,7 +996,6 @@ def view_historial_curso(page: ft.Page):
     tabla_container = ft.Container(expand=True)
     
     def load_data():
-        # Calculamos inicio y fin de mes
         _, last_day = calendar.monthrange(current_date.year, current_date.month)
         f_inicio = current_date.replace(day=1).isoformat()
         f_fin = current_date.replace(day=last_day).isoformat()
@@ -1017,32 +1006,50 @@ def view_historial_curso(page: ft.Page):
         if not fechas:
             tabla_container.content = ft.Text("No hay registros de asistencia en este mes todavía.", italic=True, color="grey")
         else:
-            # Armamos las columnas (Alumno + cada dia del mes que tenga registro)
             columns = [ft.DataColumn(ft.Text("Alumno", weight="bold"))]
             for f in fechas:
-                dia = f.split("-")[2] # Agarramos solo el "DD"
+                dia = f.split("-")[2] 
                 columns.append(ft.DataColumn(ft.Text(dia, weight="bold")))
+                
+            # --- MOD 14.1: Columna final de faltas totales ---
+            columns.append(ft.DataColumn(ft.Text("Faltas", weight="bold", color="red")))
             
-            # Armamos las filas
             rows = []
             for a in alumnos:
                 aid = a['id']
-                cells = [ft.DataCell(ft.Text(a['nombre'], width=150))] # Nombre con ancho fijo para que no se achique
+                cells = [ft.DataCell(ft.Text(a['nombre'], width=150))] 
+                
+                faltas_mes = 0 # Arrancamos el contador del mes para el pibe
                 
                 for f in fechas:
                     status = data_asist.get(aid, {}).get(f, "-")
-                    # Le metemos un poquito de onda con los colores
                     color = "black"
-                    if status == "A": color = "red"
-                    elif status in ["TM", "TT", "MFM", "MFT", "T"]: color = "orange"
-                    elif status == "P": color = "green"
-                    elif status in ["J", "S"]: color = "blue"
+                    
+                    if status == "A": 
+                        color = "red"
+                        faltas_mes += 1
+                    elif status == "S":
+                        color = "blue"
+                        faltas_mes += 1
+                    elif status in ["TM", "TT", "T"]: 
+                        color = "orange"
+                        faltas_mes += 0.25
+                    elif status in ["MFM", "MFT"]: 
+                        color = "orange"
+                        faltas_mes += 0.5
+                    elif status == "P": 
+                        color = "green"
+                    elif status == "J": 
+                        color = "blue"
                     
                     cells.append(ft.DataCell(ft.Text(status, color=color, weight="bold" if status != "-" else "normal")))
+                
+                # Le damos formato fachero al número (que no diga "2.0" sino "2")
+                fmt_faltas = int(faltas_mes) if faltas_mes == int(faltas_mes) else faltas_mes
+                cells.append(ft.DataCell(ft.Text(str(fmt_faltas), weight="bold", color="red")))
                     
                 rows.append(ft.DataRow(cells=cells))
             
-            # Lo metemos en un Row con scroll horizontal para que no se rompa la pantalla en los celus
             tabla = ft.DataTable(columns=columns, rows=rows, heading_row_color=THEME["secondary"], column_spacing=20)
             tabla_container.content = ft.Row([tabla], scroll="always", expand=True)
         
@@ -1051,7 +1058,6 @@ def view_historial_curso(page: ft.Page):
         
     def prev_month(e):
         nonlocal current_date
-        # Le restamos un dia al dia 1, caemos en el mes anterior, y lo seteamos al dia 1 de ese mes
         prev = (current_date - timedelta(days=1)).replace(day=1)
         current_date = prev
         page.session.set("historial_date", current_date.isoformat())
@@ -1464,7 +1470,7 @@ def main(page: ft.Page):
         "/": view_login,
         "/dashboard": view_dashboard,
         "/curso": view_curso,
-        "/historial_curso": view_historial_curso, # <--- RUTA NUEVA
+        "/historial_curso": view_historial_curso, 
         "/student_detail": view_student_detail,
         "/form_student": view_form_student,
         "/admin": view_admin,
