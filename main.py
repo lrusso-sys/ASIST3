@@ -12,7 +12,7 @@ import time
 from urllib.parse import urlparse
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v14.1 (Historial Dinámico con Total de Faltas) ---", flush=True)
+print("--- Oñepyrũ aplicación v14.2 (Fix Scroll Historial Dinámico) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -1011,7 +1011,6 @@ def view_historial_curso(page: ft.Page):
                 dia = f.split("-")[2] 
                 columns.append(ft.DataColumn(ft.Text(dia, weight="bold")))
                 
-            # --- MOD 14.1: Columna final de faltas totales ---
             columns.append(ft.DataColumn(ft.Text("Faltas", weight="bold", color="red")))
             
             rows = []
@@ -1019,7 +1018,7 @@ def view_historial_curso(page: ft.Page):
                 aid = a['id']
                 cells = [ft.DataCell(ft.Text(a['nombre'], width=150))] 
                 
-                faltas_mes = 0 # Arrancamos el contador del mes para el pibe
+                faltas_mes = 0 
                 
                 for f in fechas:
                     status = data_asist.get(aid, {}).get(f, "-")
@@ -1044,14 +1043,19 @@ def view_historial_curso(page: ft.Page):
                     
                     cells.append(ft.DataCell(ft.Text(status, color=color, weight="bold" if status != "-" else "normal")))
                 
-                # Le damos formato fachero al número (que no diga "2.0" sino "2")
                 fmt_faltas = int(faltas_mes) if faltas_mes == int(faltas_mes) else faltas_mes
                 cells.append(ft.DataCell(ft.Text(str(fmt_faltas), weight="bold", color="red")))
                     
                 rows.append(ft.DataRow(cells=cells))
             
             tabla = ft.DataTable(columns=columns, rows=rows, heading_row_color=THEME["secondary"], column_spacing=20)
-            tabla_container.content = ft.Row([tabla], scroll="always", expand=True)
+            
+            # --- FIX SCROLL DOBLE ACÁ ---
+            # Envolvemos la tabla en una fila (para scroll horizontal) 
+            # y esa fila en una columna (para scroll vertical dentro del contenedor)
+            tabla_container.content = ft.Column([
+                ft.Row([tabla], scroll="always")
+            ], scroll="always", expand=True)
         
         txt_mes.value = f"{MESES_ESP[current_date.month - 1]} {current_date.year}"
         if len(page.views) > 0: page.update()
@@ -1081,13 +1085,14 @@ def view_historial_curso(page: ft.Page):
         ft.IconButton("chevron_right", on_click=next_month, icon_color="blue", icon_size=30)
     ], alignment="center")
     
+    # --- FIX SCROLL: Añadimos scroll="auto" a la View principal ---
     return ft.View("/historial_curso", [
         header,
         ft.Container(content=ft.Column([
             UIHelper.create_card(controles_mes, padding=10),
             UIHelper.create_card(tabla_container, expand=True, padding=0)
         ], expand=True), padding=10, bgcolor=THEME["bg"], expand=True)
-    ])
+    ], scroll="auto")
 
 def view_form_student(page: ft.Page):
     cid = page.session.get("curso_id"); aid = page.session.get("alumno_id_edit"); is_edit = aid is not None
