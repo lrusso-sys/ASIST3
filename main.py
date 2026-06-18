@@ -12,7 +12,7 @@ import time
 from urllib.parse import urlparse
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v14.2 (Fix Scroll Historial Dinámico) ---", flush=True)
+print("--- Oñepyrũ aplicación v14.3 (Pase de Curso con Asistencia) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -294,10 +294,13 @@ class SchoolService:
     def add_alumno(data):
         return db.execute("INSERT INTO Alumnos (curso_id, nombre, dni, observaciones, tutor_nombre, tutor_telefono, tpp, tpp_dias) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", 
                           (data['curso_id'], data['nombre'], data['dni'], data['obs'], data['tn'], data['tt'], data['tpp'], data['tpp_dias']))
+    
+    # --- MOD 14.3: Ahora actualiza curso_id para permitir mover al alumno ---
     @staticmethod
     def update_alumno(aid, data):
-        return db.execute("UPDATE Alumnos SET nombre=%s, dni=%s, observaciones=%s, tutor_nombre=%s, tutor_telefono=%s, tpp=%s, tpp_dias=%s WHERE id=%s", 
-                          (data['nombre'], data['dni'], data['obs'], data['tn'], data['tt'], data['tpp'], data['tpp_dias'], aid))
+        return db.execute("UPDATE Alumnos SET curso_id=%s, nombre=%s, dni=%s, observaciones=%s, tutor_nombre=%s, tutor_telefono=%s, tpp=%s, tpp_dias=%s WHERE id=%s", 
+                          (data['curso_id'], data['nombre'], data['dni'], data['obs'], data['tn'], data['tt'], data['tpp'], data['tpp_dias'], aid))
+                          
     @staticmethod
     def delete_alumno(aid): return db.execute("DELETE FROM Alumnos WHERE id = %s", (aid,))
     
@@ -435,7 +438,7 @@ class ReportService:
             cell_fmt = workbook.add_format({'border': 1})
             red_fmt = workbook.add_format({'border': 1, 'color': 'red'})
 
-            requisitos = DocService.get_requisitos_curso(curso_id)
+            requisites = DocService.get_requisitos_curso(curso_id)
             req_headers = [r['descripcion'] for r in requisitos]
 
             headers = ["Nombre", "DNI", "Presentes", "Faltas Tot.", "% Asist.", "Situación"] + req_headers
@@ -1050,9 +1053,6 @@ def view_historial_curso(page: ft.Page):
             
             tabla = ft.DataTable(columns=columns, rows=rows, heading_row_color=THEME["secondary"], column_spacing=20)
             
-            # --- FIX SCROLL DOBLE ACÁ ---
-            # Envolvemos la tabla en una fila (para scroll horizontal) 
-            # y esa fila en una columna (para scroll vertical dentro del contenedor)
             tabla_container.content = ft.Column([
                 ft.Row([tabla], scroll="always")
             ], scroll="always", expand=True)
@@ -1085,7 +1085,6 @@ def view_historial_curso(page: ft.Page):
         ft.IconButton("chevron_right", on_click=next_month, icon_color="blue", icon_size=30)
     ], alignment="center")
     
-    # --- FIX SCROLL: Añadimos scroll="auto" a la View principal ---
     return ft.View("/historial_curso", [
         header,
         ft.Container(content=ft.Column([
@@ -1098,6 +1097,15 @@ def view_form_student(page: ft.Page):
     cid = page.session.get("curso_id"); aid = page.session.get("alumno_id_edit"); is_edit = aid is not None
     nm = ft.TextField(label="Nombre"); dn = ft.TextField(label="DNI"); tn = ft.TextField(label="Tutor"); tt = ft.TextField(label="Tel. Tutor"); ob = ft.TextField(label="Observaciones", multiline=True)
     
+    # --- MOD 14.3: CARGAR CURSOS DISPONIBLES SÓLO SI ES UNA EDICIÓN PARA PODER MOVER AL PIBE ---
+    cursos_disponibles = SchoolService.get_cursos_all_active()
+    dd_curso = ft.Dropdown(
+        label="Cambiar de Curso (Mover alumno)",
+        value=str(cid),
+        options=[ft.dropdown.Option(key=str(c['id']), text=c['nombre']) for c in cursos_disponibles],
+        visible=is_edit # Oculto al crear, visible al editar
+    )
+
     sw_tpp = ft.Switch(label="Activar Trayectoria (TPP)", value=False)
     checks = [ft.Checkbox(label=d, value=True, data=str(i)) for i, d in enumerate(["Lun","Mar","Mié","Jue","Vie"])]
     cont_days = ft.Column([ft.Text("Días Asistencia:")] + checks, visible=False)
@@ -1115,7 +1123,11 @@ def view_form_student(page: ft.Page):
     def save(e):
         if not nm.value: return UIHelper.show_snack(page, "Nombre obligatorio", True)
         tpp_days = ",".join([c.data for c in checks if c.value]) if sw_tpp.value else ""
-        data = {'curso_id': cid, 'nombre': nm.value, 'dni': dn.value, 'tn': tn.value, 'tt': tt.value, 'obs': ob.value, 'tpp': 1 if sw_tpp.value else 0, 'tpp_dias': tpp_days}
+        
+        # MOD 14.3: El curso destino se toma del dropdown si es una edición, sino usa el curso actual
+        target_curso_id = int(dd_curso.value) if is_edit else int(cid)
+        
+        data = {'curso_id': target_curso_id, 'nombre': nm.value, 'dni': dn.value, 'tn': tn.value, 'tt': tt.value, 'obs': ob.value, 'tpp': 1 if sw_tpp.value else 0, 'tpp_dias': tpp_days}
         if is_edit: SchoolService.update_alumno(aid, data)
         else: SchoolService.add_alumno(data)
         page.go("/curso")
@@ -1143,7 +1155,7 @@ def view_form_student(page: ft.Page):
     return ft.View("/form_student", [
         UIHelper.create_header("Alumno", leading=ft.IconButton("arrow_back", icon_color="white", on_click=lambda _: page.go("/curso"))),
         ft.Container(content=UIHelper.create_card(ft.Column([
-            nm, dn, ft.Divider(), tn, tt, ft.Divider(), ob, ft.Divider(),
+            nm, dn, dd_curso, ft.Divider(), tn, tt, ft.Divider(), ob, ft.Divider(),
             ft.Container(content=ft.Column([sw_tpp, cont_days]), bgcolor="blue50", padding=10, border_radius=10),
             ft.Container(height=10),
             ft.ElevatedButton("Guardar", on_click=save, width=float("inf"), bgcolor=THEME["primary"], color="white"),
