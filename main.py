@@ -12,7 +12,7 @@ import time
 from urllib.parse import urlparse
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v14.4 (Fix Reportes y Debug Excel) ---", flush=True)
+print("--- Oñepyrũ aplicación v14.3 (Pase de Curso con Asistencia) ---", flush=True)
 
 try:
     import xlsxwriter
@@ -425,7 +425,6 @@ class AttendanceService:
     def get_history_range(aid, f_inicio, f_fin): return db.fetch_all("SELECT fecha, status FROM Asistencia WHERE alumno_id = %s AND fecha >= %s AND fecha <= %s ORDER BY fecha ASC", (aid, f_inicio, f_fin))
 
 class ReportService:
-
     @staticmethod
     def generate_excel_curso(curso_id, f_inicio, f_fin):
         if not xlsxwriter: return None
@@ -439,8 +438,7 @@ class ReportService:
             cell_fmt = workbook.add_format({'border': 1})
             red_fmt = workbook.add_format({'border': 1, 'color': 'red'})
 
-            # Corrección acá: unificamos el nombre a "requisitos"
-            requisitos = DocService.get_requisitos_curso(curso_id)
+            requisites = DocService.get_requisitos_curso(curso_id)
             req_headers = [r['descripcion'] for r in requisitos]
 
             headers = ["Nombre", "DNI", "Presentes", "Faltas Tot.", "% Asist.", "Situación"] + req_headers
@@ -463,7 +461,6 @@ class ReportService:
                 ws.write(i, 5, situacion, red_fmt if situacion == "En Riesgo" else cell_fmt)
                 
                 estados_doc = DocService.get_estado_alumno(a['id'])
-                # Y acá también usamos "requisitos"
                 for col_idx, req in enumerate(requisitos):
                     entregado = "Sí" if estados_doc.get(req['id']) == 1 else "No"
                     ws.write(i, 6 + col_idx, entregado, cell_fmt)
