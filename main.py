@@ -12,7 +12,7 @@ import time
 from urllib.parse import urlparse
 
 # --- CAPA 0: DEPENDENCIAS EXTERNAS ---
-print("--- Oñepyrũ aplicación v14.3 (Pase de Curso con Asistencia) ---", flush=True)
+print("--- Oñepyrũ aplicación v14.4 (Fix Reportes y Debug Excel) ---", flush=True)
 
 try:
     import xlsxwriter
